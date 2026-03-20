@@ -23,11 +23,11 @@
   };
 
   const TOOL_SUGGESTIONS = {
-    study: ['flashcards', 'notes', 'practice quiz'],
-    research: ['reference manager', 'note capture', 'session summary'],
-    write: ['outline', 'document editor', 'citation helper'],
-    build: ['docs', 'issues', 'code editor'],
-    apply: ['job tracker', 'resume', 'calendar']
+    study: ['flashcards', 'notes', 'practice quiz', 'focus timer'],
+    research: ['reference manager', 'note capture', 'session summary', 'reading list'],
+    write: ['outline', 'document editor', 'citation helper', 'draft checklist'],
+    build: ['docs', 'issues', 'code editor', 'debug console'],
+    apply: ['job tracker', 'resume', 'calendar', 'company board']
   };
 
 
@@ -501,10 +501,15 @@
       label,
       isUseful: label === 'relevant',
       summary: label === 'relevant'
-        ? 'This page strongly matches your intent.'
+        ? `This page strongly matches your intent for ${normalizedIntent.topic || 'the current task'}.`
         : label === 'maybe'
-          ? 'This page partially matches your intent.'
-          : 'This page looks like a likely distraction.'
+          ? `This page has some useful overlap with ${normalizedIntent.topic || 'the current task'}, but it is not a perfect fit.`
+          : `This page appears to pull you away from ${normalizedIntent.topic || 'the current task'}.`,
+      recommendedAction: label === 'relevant'
+        ? 'Save this page, extract notes, or keep exploring nearby sources.'
+        : label === 'maybe'
+          ? 'Skim quickly and decide whether to save it for later.'
+          : 'Consider closing this tab or returning to a saved relevant page.'
     };
   }
 

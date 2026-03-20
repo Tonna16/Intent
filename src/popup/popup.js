@@ -9,70 +9,122 @@
   const pageStatusPill = document.getElementById('page-status-pill');
   const pageSummary = document.getElementById('page-summary');
   const pageScore = document.getElementById('page-score');
-  const pageKeywords = document.getElementById('page-keywords');
-  const pageMatches = document.getElementById('page-matches');
+  const pageReasons = document.getElementById('page-reasons');
+  const focusScore = document.getElementById('focus-score');
+  const focusFill = document.getElementById('focus-fill');
+  const sessionVisits = document.getElementById('session-visits');
+  const sessionUseful = document.getElementById('session-useful');
+  const sessionDrift = document.getElementById('session-drift');
+  const intentUpdated = document.getElementById('intent-updated');
   const intentMode = document.getElementById('intent-mode');
   const intentTopic = document.getElementById('intent-topic');
   const intentKeywords = document.getElementById('intent-keywords');
   const intentDistractors = document.getElementById('intent-distractors');
   const intentTools = document.getElementById('intent-tools');
   const usefulPages = document.getElementById('useful-pages');
+  const sessionNotes = document.getElementById('session-notes');
+  const topKeywords = document.getElementById('top-keywords');
+  const driftEvents = document.getElementById('drift-events');
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function chipsMarkup(values, emptyLabel) {
+    if (!values || !values.length) {
+      return `<div class="empty">${escapeHtml(emptyLabel)}</div>`;
+    }
+    return values.map((value) => `<span class="chip">${escapeHtml(value)}</span>`).join('');
+  }
 
   function formatLabel(label) {
     switch (label) {
       case 'relevant': return 'Highly relevant';
       case 'distraction': return 'Likely distraction';
-      default: return 'Partial match';
+      case 'maybe': return 'Partial match';
+      default: return 'No page scored';
     }
   }
 
-  function renderIntent(intentText) {
+  function renderIntent(intentText, session) {
     if (!globalScope.IntentClassifier) {
-      return;
+      return null;
     }
 
     const parsed = globalScope.IntentClassifier.normalizeIntentText(intentText || '');
     intentMode.textContent = parsed.mode || '—';
     intentTopic.textContent = parsed.topic || 'No active topic';
-    intentKeywords.textContent = parsed.keywords.length ? parsed.keywords.join(', ') : 'None yet';
-    intentDistractors.textContent = parsed.distractors.length ? parsed.distractors.join(', ') : 'None yet';
-    intentTools.textContent = parsed.suggestedTools.length ? parsed.suggestedTools.join(', ') : 'None yet';
+    intentKeywords.innerHTML = chipsMarkup(parsed.keywords.slice(0, 10), 'No keywords yet');
+    intentDistractors.innerHTML = chipsMarkup(parsed.distractors, 'No distractors configured');
+    intentTools.innerHTML = chipsMarkup(parsed.suggestedTools, 'No tool suggestions yet');
+    intentUpdated.textContent = session && session.updatedAt ? `Updated ${new Date(session.updatedAt).toLocaleString()}` : 'No active session';
     return parsed;
   }
 
   function setPageState(classification) {
     if (!classification) {
-      pageStatusPill.textContent = 'No classification yet';
-      pageStatusPill.dataset.tone = 'maybe';
-      pageSummary.textContent = 'Open a page to see how well it matches your goal.';
+      pageStatusPill.textContent = 'No page scored';
+      pageStatusPill.dataset.tone = 'idle';
+      pageSummary.textContent = 'Open a page to see how well it matches the goal.';
       pageScore.textContent = 'Score: —';
-      pageKeywords.textContent = 'Matched keywords: none';
-      pageMatches.textContent = 'Why: no evidence yet';
+      pageReasons.innerHTML = '<div class="reason">Why: no evidence yet.</div>';
       return;
     }
 
-    const keywords = Array.isArray(classification.intent && classification.intent.keywords) ? classification.intent.keywords : [];
     pageStatusPill.textContent = formatLabel(classification.label);
     pageStatusPill.dataset.tone = classification.label;
     pageSummary.textContent = classification.summary || 'Scored against your active goal.';
-    pageScore.textContent = `Score: ${classification.score}`;
-    pageKeywords.textContent = keywords.length ? `Matched keywords: ${keywords.join(', ')}` : 'Matched keywords: none';
-    pageMatches.textContent = classification.matches && classification.matches.length ? `Why: ${classification.matches.slice(0, 2).join(' • ')}` : 'Why: low evidence on this page';
+    pageScore.textContent = `Score: ${classification.score} • ${classification.intent.topic || 'No topic set'}`;
+    pageReasons.innerHTML = (classification.matches && classification.matches.length
+      ? classification.matches.slice(0, 4).map((match) => `<div class="reason">• ${escapeHtml(match)}</div>`).join('')
+      : '<div class="reason">Why: low evidence on this page.</div>');
   }
 
   function renderUsefulPages(session) {
-    const pages = session && Array.isArray(session.usefulPages) ? session.usefulPages.slice(0, 4) : [];
-    if (!pages.length) {
-      usefulPages.innerHTML = '<p class="metric">No saved pages yet.</p>';
-      return;
-    }
+    const pages = session && Array.isArray(session.usefulPages) ? session.usefulPages.slice(0, 5) : [];
+    usefulPages.innerHTML = pages.length
+      ? pages.map((page) => `
+        <div class="timeline-item">
+          <a href="${escapeHtml(page.url)}" target="_blank" rel="noreferrer">${escapeHtml(page.title || page.url)}</a>
+          <div class="meta-line">${escapeHtml(page.label || 'maybe')} • score ${escapeHtml(page.score)}${page.matchedKeywords && page.matchedKeywords.length ? ` • ${escapeHtml(page.matchedKeywords.slice(0, 4).join(', '))}` : ''}</div>
+          ${page.summary ? `<div class="meta-line">${escapeHtml(page.summary)}</div>` : ''}
+        </div>
+      `).join('')
+      : '<div class="empty">No useful pages saved yet.</div>';
+  }
 
-    usefulPages.innerHTML = pages.map((page) => `
-      <div class="session-item">
-        <a class="session-link" href="${page.url}" target="_blank" rel="noreferrer">${page.title || page.url}</a>
-        <div class="session-meta">${page.label} • score ${page.score}${page.matchedKeywords && page.matchedKeywords.length ? ` • ${page.matchedKeywords.slice(0, 3).join(', ')}` : ''}</div>
-      </div>
-    `).join('');
+  function renderNotes(session) {
+    const notes = session && Array.isArray(session.notes) ? session.notes.slice(0, 4) : [];
+    sessionNotes.innerHTML = notes.length
+      ? notes.map((note) => `<div class="note-item">${escapeHtml(note.text)}<div class="meta-line">${new Date(note.createdAt).toLocaleString()}</div></div>`).join('')
+      : '<div class="empty">No notes yet.</div>';
+  }
+
+  function renderDrift(session) {
+    const drifts = session && Array.isArray(session.driftEvents) ? session.driftEvents.slice(0, 3) : [];
+    driftEvents.innerHTML = drifts.length
+      ? drifts.map((event) => `
+        <div class="timeline-item">
+          <a href="${escapeHtml(event.url)}" target="_blank" rel="noreferrer">${escapeHtml(event.title || event.url)}</a>
+          <div class="meta-line">score ${escapeHtml(event.score)} • ${escapeHtml(event.reason)}</div>
+        </div>
+      `).join('')
+      : '<div class="empty">No drift events recorded.</div>';
+  }
+
+  function renderStats(session) {
+    const stats = session && session.stats ? session.stats : { totalVisits: 0, relevantVisits: 0, distractionVisits: 0, focusScore: 0, topKeywords: [] };
+    focusScore.textContent = `${stats.focusScore || 0}%`;
+    focusFill.style.width = `${Math.max(0, Math.min(100, stats.focusScore || 0))}%`;
+    sessionVisits.textContent = String(stats.totalVisits || 0);
+    sessionUseful.textContent = String((session && session.usefulPages && session.usefulPages.length) || 0);
+    sessionDrift.textContent = String((session && session.driftEvents && session.driftEvents.length) || 0);
+    topKeywords.innerHTML = chipsMarkup(stats.topKeywords || [], 'No themes yet');
   }
 
   function getActiveTab() {
@@ -126,8 +178,11 @@
     try {
       const state = await globalScope.IntentStorage.getState();
       input.value = state.currentIntent || '';
-      renderIntent(state.currentIntent || '');
+      renderIntent(state.currentIntent || '', state.session);
+      renderStats(state.session);
       renderUsefulPages(state.session);
+      renderNotes(state.session);
+      renderDrift(state.session);
     } catch (error) {
       statusMessage.textContent = 'Unable to load saved intent.';
     }
@@ -142,10 +197,15 @@
     statusMessage.textContent = 'Starting session…';
 
     try {
-      const parsed = renderIntent(input.value);
-      const savedIntent = await globalScope.IntentStorage.setCurrentIntent(input.value, parsed);
-      statusMessage.textContent = savedIntent ? 'Intent session saved locally.' : 'Intent cleared.';
-      renderUsefulPages(await globalScope.IntentStorage.getSession());
+      const parsed = globalScope.IntentClassifier.normalizeIntentText(input.value);
+      await globalScope.IntentStorage.setCurrentIntent(input.value, parsed);
+      const session = await globalScope.IntentStorage.getSession();
+      renderIntent(input.value, session);
+      renderStats(session);
+      renderUsefulPages(session);
+      renderNotes(session);
+      renderDrift(session);
+      statusMessage.textContent = parsed.topic ? `Intent mode activated for ${parsed.topic}.` : 'Intent session saved locally.';
       await refreshPageClassification();
     } catch (error) {
       statusMessage.textContent = 'Unable to save intent.';
@@ -162,8 +222,11 @@
     await globalScope.IntentStorage.clearSession();
     input.value = '';
     noteInput.value = '';
-    renderIntent('');
+    renderIntent('', globalScope.IntentStorage.EMPTY_SESSION);
+    renderStats(globalScope.IntentStorage.EMPTY_SESSION);
     renderUsefulPages(globalScope.IntentStorage.EMPTY_SESSION);
+    renderNotes(globalScope.IntentStorage.EMPTY_SESSION);
+    renderDrift(globalScope.IntentStorage.EMPTY_SESSION);
     setPageState(null);
     statusMessage.textContent = 'Intent session cleared.';
   }
@@ -176,6 +239,9 @@
     try {
       await globalScope.IntentStorage.addNote(noteInput.value);
       noteInput.value = '';
+      const session = await globalScope.IntentStorage.getSession();
+      renderNotes(session);
+      renderStats(session);
       statusMessage.textContent = 'Note saved to session memory.';
     } catch (error) {
       statusMessage.textContent = 'Unable to save note.';
