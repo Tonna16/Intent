@@ -3,12 +3,287 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Intent Mode Browser Options</title>
+    <title>Intent Mode Browser Settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --page-bg: #f3f4f6;
+        --panel-bg: rgba(255, 255, 255, 0.9);
+        --panel-border: rgba(148, 163, 184, 0.35);
+        --text-main: #111827;
+        --text-muted: #475569;
+        --accent: #2563eb;
+        --accent-soft: rgba(37, 99, 235, 0.12);
+        --success: #15803d;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --page-bg: #0f172a;
+          --panel-bg: rgba(15, 23, 42, 0.94);
+          --panel-border: rgba(148, 163, 184, 0.24);
+          --text-main: #e5e7eb;
+          --text-muted: #cbd5e1;
+          --accent-soft: rgba(96, 165, 250, 0.15);
+          --success: #4ade80;
+        }
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Inter, Arial, sans-serif;
+        background: linear-gradient(180deg, var(--page-bg), #dbeafe 140%);
+        color: var(--text-main);
+      }
+
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 40px 20px 64px;
+      }
+
+      .hero {
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(28px, 4vw, 40px);
+      }
+
+      .subtitle {
+        margin: 0;
+        max-width: 60ch;
+        color: var(--text-muted);
+        line-height: 1.6;
+      }
+
+      .panel {
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 18px;
+        padding: 24px;
+        backdrop-filter: blur(18px);
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+      }
+
+      .section + .section {
+        margin-top: 28px;
+        padding-top: 28px;
+        border-top: 1px solid var(--panel-border);
+      }
+
+      .section h2 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+
+      .section p {
+        margin: 0 0 18px;
+        color: var(--text-muted);
+        line-height: 1.5;
+      }
+
+      .toggle-list {
+        display: grid;
+        gap: 14px;
+      }
+
+      .toggle {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 12px;
+        align-items: start;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: var(--accent-soft);
+      }
+
+      .toggle input {
+        width: 18px;
+        height: 18px;
+        margin-top: 2px;
+        accent-color: var(--accent);
+      }
+
+      .toggle strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 15px;
+      }
+
+      .toggle span,
+      .threshold-help,
+      .status,
+      .preview li {
+        color: var(--text-muted);
+      }
+
+      .threshold-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
+
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+
+      .field label {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .field input {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        font: inherit;
+        color: inherit;
+        background: rgba(255, 255, 255, 0.75);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .field input {
+          background: rgba(15, 23, 42, 0.9);
+        }
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        margin-top: 28px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        background: var(--accent);
+        color: white;
+        font: inherit;
+        font-weight: 700;
+        padding: 12px 18px;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: transparent;
+        color: var(--text-main);
+        border: 1px solid var(--panel-border);
+      }
+
+      .status {
+        min-height: 20px;
+        font-size: 14px;
+      }
+
+      .status[data-tone='success'] {
+        color: var(--success);
+      }
+
+      .preview {
+        margin-top: 20px;
+        padding: 16px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.04);
+      }
+
+      .preview ul {
+        margin: 10px 0 0;
+        padding-left: 18px;
+      }
+    </style>
   </head>
   <body>
     <main>
-      <h1>Intent Mode Browser</h1>
-      <p>Options can be added here later without requiring remote services.</p>
+      <header class="hero">
+        <h1>Intent Mode Browser settings</h1>
+        <p class="subtitle">
+          Configure how the extension filters distracting surfaces, highlights relevant content, and maps page scores into
+          <strong>relevant</strong>, <strong>maybe</strong>, and <strong>distraction</strong> labels.
+        </p>
+      </header>
+
+      <form class="panel" id="settings-form">
+        <section class="section">
+          <h2>Behavior toggles</h2>
+          <p>Choose which interventions the content script should apply while browsing.</p>
+          <div class="toggle-list">
+            <label class="toggle" for="hide-youtube-shorts">
+              <input id="hide-youtube-shorts" name="hideYouTubeShorts" type="checkbox" />
+              <div>
+                <strong>Hide YouTube Shorts</strong>
+                <span>Suppress Shorts shelves, reel rows, and Shorts links on YouTube pages.</span>
+              </div>
+            </label>
+
+            <label class="toggle" for="blur-recommended-feeds">
+              <input id="blur-recommended-feeds" name="blurRecommendedFeeds" type="checkbox" />
+              <div>
+                <strong>Blur recommended feeds</strong>
+                <span>Blur common sidebars, recommendation rails, and social feed containers until you intentionally engage.</span>
+              </div>
+            </label>
+
+            <label class="toggle" for="highlight-relevant-paragraphs">
+              <input id="highlight-relevant-paragraphs" name="highlightRelevantParagraphs" type="checkbox" />
+              <div>
+                <strong>Highlight relevant paragraphs</strong>
+                <span>Accent paragraphs that match your saved intent keywords or phrases.</span>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Sensitivity thresholds</h2>
+          <p>These score cutoffs control how strongly the classifier categorizes a page.</p>
+          <div class="threshold-grid">
+            <div class="field">
+              <label for="threshold-relevant">Relevant threshold</label>
+              <input id="threshold-relevant" name="thresholdRelevant" type="number" min="0" step="1" inputmode="numeric" />
+            </div>
+            <div class="field">
+              <label for="threshold-maybe">Maybe threshold</label>
+              <input id="threshold-maybe" name="thresholdMaybe" type="number" min="0" step="1" inputmode="numeric" />
+            </div>
+            <div class="field">
+              <label for="threshold-distraction">Distraction floor</label>
+              <input id="threshold-distraction" name="thresholdDistraction" type="number" min="0" step="1" inputmode="numeric" />
+            </div>
+          </div>
+          <p class="threshold-help">
+            The extension will normalize invalid combinations so <strong>relevant ≥ maybe ≥ distraction</strong>.
+          </p>
+        </section>
+
+        <section class="section">
+          <h2>What changes immediately</h2>
+          <div class="preview">
+            <strong>Live update behavior</strong>
+            <ul>
+              <li>Content scripts listen for <code>chrome.storage.onChanged</code> updates.</li>
+              <li>Changing these settings will re-run classification and re-apply page treatments without a full extension reload.</li>
+              <li>Your settings stay local in <code>chrome.storage.local</code>.</li>
+            </ul>
+          </div>
+        </section>
+
+        <div class="actions">
+          <button type="submit">Save settings</button>
+          <button class="secondary" id="reset-settings" type="button">Reset defaults</button>
+          <div class="status" id="status-message" aria-live="polite"></div>
+        </div>
+      </form>
     </main>
+
+    <script src="src/shared/intent-storage.js"></script>
+    <script src="src/options/options.js"></script>
   </body>
 </html>
