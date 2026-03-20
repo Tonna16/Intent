@@ -2,7 +2,7 @@
   const STOP_WORDS = new Set([
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'how', 'i', 'if', 'in',
     'into', 'is', 'it', 'of', 'on', 'or', 's', 'so', 'such', 'that', 'the', 'their', 'then', 'there',
-    'these', 'they', 'this', 'to', 'was', 'we', 'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'you', 'your'
+    'these', 'they', 'this', 'to', 'understand', 'goal', 'was', 'we', 'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'you', 'your'
   ]);
 
   const MODE_KEYWORDS = {
@@ -30,6 +30,18 @@
     apply: ['job tracker', 'resume', 'calendar']
   };
 
+
+  const KEYWORD_SYNONYMS = {
+    computer: ['computers', 'computing', 'software', 'hardware'],
+    computers: ['computer', 'computing', 'software', 'hardware'],
+    code: ['coding', 'programming', 'developer', 'development'],
+    coding: ['code', 'programming', 'developer', 'development'],
+    math: ['mathematics', 'algebra', 'calculus', 'statistics'],
+    ai: ['artificial intelligence', 'machine learning', 'ml'],
+    job: ['career', 'role', 'position', 'interview'],
+    study: ['learn', 'learning', 'review', 'practice']
+  };
+
   const BLOCK_SELECTOR = [
     'article', 'main', 'section', 'aside', 'nav', 'p', '[role="main"]', '[role="article"]',
     '[role="complementary"]', '[role="navigation"]', '[role="feed"]', '[role="list"]', 'ul', 'ol',
@@ -43,6 +55,60 @@
 
   function normalizeToken(token) {
     return token.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+
+  function canonicalizeToken(token) {
+    const normalized = normalizeToken(token).replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return '';
+    }
+
+    if (normalized.length > 4 && normalized.endsWith('ies')) {
+      return `${normalized.slice(0, -3)}y`;
+    }
+
+    if (normalized.length > 5 && normalized.endsWith('ing')) {
+      return normalized.slice(0, -3);
+    }
+
+    if (normalized.length > 4 && normalized.endsWith('ed')) {
+      return normalized.slice(0, -2);
+    }
+
+    if (normalized.length > 3 && normalized.endsWith('es')) {
+      return normalized.slice(0, -2);
+    }
+
+    if (normalized.length > 3 && normalized.endsWith('s')) {
+      return normalized.slice(0, -1);
+    }
+
+    return normalized;
+  }
+
+  function expandKeywordSet(tokens) {
+    const expanded = [];
+
+    tokens.forEach((token) => {
+      const normalized = normalizeToken(token).replace(/\s+/g, ' ').trim();
+      if (!normalized) {
+        return;
+      }
+
+      expanded.push(normalized);
+
+      const canonical = canonicalizeToken(normalized);
+      if (canonical && canonical !== normalized) {
+        expanded.push(canonical);
+      }
+
+      (KEYWORD_SYNONYMS[normalized] || []).forEach((synonym) => expanded.push(synonym));
+      if (canonical) {
+        (KEYWORD_SYNONYMS[canonical] || []).forEach((synonym) => expanded.push(synonym));
+      }
+    });
+
+    return unique(expanded);
   }
 
   function detectMode(normalizedText) {
@@ -85,7 +151,7 @@
 
     const mode = detectMode(normalizedText);
     const rawTokens = normalizedText.split(' ');
-    const keywords = unique(rawTokens.filter((token) => token.length > 2 && !STOP_WORDS.has(token)));
+    const keywords = expandKeywordSet(rawTokens.filter((token) => token.length > 2 && !STOP_WORDS.has(token)));
     const phrases = [];
 
     for (let index = 0; index < rawTokens.length - 1; index += 1) {
@@ -231,7 +297,9 @@
     const paragraphText = normalizeToken(pageSignals.paragraphs || '').replace(/\s+/g, ' ').trim();
     const domainText = normalizeToken(pageSignals.domain || '').replace(/\s+/g, ' ').trim();
 
-    const breakdown = { titleMatches: 0, headingMatches: 0, keywordFrequency: 0, paragraphDensity: 0, phraseMatches: 0, domainMatches: 0 };
+    const breakdown = { titleMatches: 0, headingMatches: 0, keywordFrequency: 0, paragraphDensity: 0, phraseMatches: 0, domainMatches: 0, coverageBonus: 0 };
+
+    let matchedKeywordCount = 0;
 
     intent.keywords.forEach((keyword) => {
       const titleMatches = countOccurrences(titleText, keyword);
@@ -250,7 +318,19 @@
       } else if (paragraphMatches === 1) {
         breakdown.paragraphDensity += 1;
       }
+
+      if (titleMatches > 0 || headingMatches > 0 || bodyMatches > 0 || paragraphMatches > 0 || domainMatches > 0) {
+        matchedKeywordCount += 1;
+      }
     });
+
+    if (matchedKeywordCount >= 4) {
+      breakdown.coverageBonus = 8;
+    } else if (matchedKeywordCount >= 2) {
+      breakdown.coverageBonus = 6;
+    } else if (matchedKeywordCount === 1) {
+      breakdown.coverageBonus = 2;
+    }
 
     intent.phrases.forEach((phrase) => {
       const titlePhraseMatch = titleText.includes(phrase) ? 1 : 0;
@@ -402,7 +482,10 @@
     const scoring = scorePage(normalizedIntent, pageSignals);
     const blocks = extractScoredBlocks(normalizedIntent, thresholds);
     const selected = chooseBlockTargets(blocks, thresholds);
-    const label = normalizedIntent.keywords.length || normalizedIntent.phrases.length ? selected.label : 'maybe';
+    const pageLevelLabel = mapScoreToLabel(scoring.score, thresholds);
+    const label = normalizedIntent.keywords.length || normalizedIntent.phrases.length
+      ? (pageLevelLabel === 'relevant' && selected.label === 'maybe' ? 'relevant' : selected.label)
+      : 'maybe';
 
     return {
       intent: normalizedIntent,
