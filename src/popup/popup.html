@@ -1,14 +1,66 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Intent Mode Browser</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Intent Classifier</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 16px;
+        width: 320px;
+        color: #1f2937;
+      }
+
+      h1 {
+        font-size: 18px;
+        margin: 0 0 12px;
+      }
+
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 96px;
+        box-sizing: border-box;
+        resize: vertical;
+        padding: 8px;
+        font: inherit;
+      }
+
+      button {
+        margin-top: 12px;
+        width: 100%;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 6px;
+        background: #2563eb;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .status {
+        margin-top: 10px;
+        font-size: 12px;
+        min-height: 16px;
+      }
+    </style>
   </head>
   <body>
-    <main>
-      <h1>Intent Mode Browser</h1>
-      <p>Local page analysis is enabled for the active tab.</p>
-    </main>
+    <h1>Current intent</h1>
+    <label for="intent-input">Describe what you want to stay focused on.</label>
+    <textarea id="intent-input" placeholder="Example: research chrome extension content scripts and storage APIs"></textarea>
+    <button id="save-intent" type="button">Save intent</button>
+    <div class="status" id="status-message" aria-live="polite"></div>
+
+    <script src="src/shared/intent-storage.js"></script>
+    <script src="src/popup/popup.js"></script>
   </body>
 </html>
