@@ -7,7 +7,7 @@
 
   const DEFAULT_SETTINGS = {
     hideYouTubeShorts: true,
-    blurRecommendedFeeds: false,
+    blurRecommendedFeeds: true,
     highlightRelevantParagraphs: true,
     autoSaveRelevantPages: true,
     showDriftBanner: true,
@@ -26,7 +26,16 @@
     parser: null,
     visits: [],
     usefulPages: [],
-    notes: []
+    notes: [],
+    driftEvents: [],
+    summaries: [],
+    stats: {
+      totalVisits: 0,
+      relevantVisits: 0,
+      distractionVisits: 0,
+      focusScore: 0,
+      topKeywords: []
+    }
   };
 
   function hasChromeStorage() {
@@ -45,7 +54,16 @@
       ...EMPTY_SESSION,
       visits: [],
       usefulPages: [],
-      notes: []
+      notes: [],
+      driftEvents: [],
+      summaries: [],
+      stats: {
+        totalVisits: 0,
+        relevantVisits: 0,
+        distractionVisits: 0,
+        focusScore: 0,
+        topKeywords: []
+      }
     };
   }
 
@@ -64,25 +82,11 @@
       return mergedSettings;
     }
 
-    if (typeof rawSettings.hideYouTubeShorts === 'boolean') {
-      mergedSettings.hideYouTubeShorts = rawSettings.hideYouTubeShorts;
-    }
-
-    if (typeof rawSettings.blurRecommendedFeeds === 'boolean') {
-      mergedSettings.blurRecommendedFeeds = rawSettings.blurRecommendedFeeds;
-    }
-
-    if (typeof rawSettings.highlightRelevantParagraphs === 'boolean') {
-      mergedSettings.highlightRelevantParagraphs = rawSettings.highlightRelevantParagraphs;
-    }
-
-    if (typeof rawSettings.autoSaveRelevantPages === 'boolean') {
-      mergedSettings.autoSaveRelevantPages = rawSettings.autoSaveRelevantPages;
-    }
-
-    if (typeof rawSettings.showDriftBanner === 'boolean') {
-      mergedSettings.showDriftBanner = rawSettings.showDriftBanner;
-    }
+    ['hideYouTubeShorts', 'blurRecommendedFeeds', 'highlightRelevantParagraphs', 'autoSaveRelevantPages', 'showDriftBanner'].forEach((key) => {
+      if (typeof rawSettings[key] === 'boolean') {
+        mergedSettings[key] = rawSettings[key];
+      }
+    });
 
     const rawThresholds = rawSettings.thresholds && typeof rawSettings.thresholds === 'object'
       ? rawSettings.thresholds
@@ -103,6 +107,34 @@
     }
 
     return mergedSettings;
+  }
+
+  function normalizeSession(session) {
+    if (!session || typeof session !== 'object') {
+      return cloneEmptySession();
+    }
+
+    const normalized = {
+      ...cloneEmptySession(),
+      ...session,
+      visits: Array.isArray(session.visits) ? session.visits : [],
+      usefulPages: Array.isArray(session.usefulPages) ? session.usefulPages : [],
+      notes: Array.isArray(session.notes) ? session.notes : [],
+      driftEvents: Array.isArray(session.driftEvents) ? session.driftEvents : [],
+      summaries: Array.isArray(session.summaries) ? session.summaries : []
+    };
+
+    normalized.stats = typeof session.stats === 'object' && session.stats
+      ? {
+          totalVisits: Number(session.stats.totalVisits) || 0,
+          relevantVisits: Number(session.stats.relevantVisits) || 0,
+          distractionVisits: Number(session.stats.distractionVisits) || 0,
+          focusScore: Number(session.stats.focusScore) || 0,
+          topKeywords: Array.isArray(session.stats.topKeywords) ? session.stats.topKeywords.slice(0, 8) : []
+        }
+      : cloneEmptySession().stats;
+
+    return normalized;
   }
 
   function getLocalValues(keys) {
@@ -148,40 +180,61 @@
 
   async function getSession() {
     const result = await getLocalValues([STORAGE_KEYS.session]);
-    const session = result[STORAGE_KEYS.session];
-
-    if (!session || typeof session !== 'object') {
-      return cloneEmptySession();
-    }
-
-    return {
-      ...cloneEmptySession(),
-      ...session,
-      visits: Array.isArray(session.visits) ? session.visits : [],
-      usefulPages: Array.isArray(session.usefulPages) ? session.usefulPages : [],
-      notes: Array.isArray(session.notes) ? session.notes : []
-    };
+    return normalizeSession(result[STORAGE_KEYS.session]);
   }
 
   async function persistSession(session) {
-    await setLocalValues({ [STORAGE_KEYS.session]: session });
-    return session;
+    const normalized = normalizeSession(session);
+    await setLocalValues({ [STORAGE_KEYS.session]: normalized });
+    return normalized;
+  }
+
+  function computeSessionStats(session) {
+    const visits = Array.isArray(session.visits) ? session.visits : [];
+    const keywordFrequency = new Map();
+    let relevantVisits = 0;
+    let distractionVisits = 0;
+
+    visits.forEach((visit) => {
+      if (visit.label === 'relevant') {
+        relevantVisits += 1;
+      }
+      if (visit.label === 'distraction') {
+        distractionVisits += 1;
+      }
+      (Array.isArray(visit.matchedKeywords) ? visit.matchedKeywords : []).forEach((keyword) => {
+        keywordFrequency.set(keyword, (keywordFrequency.get(keyword) || 0) + 1);
+      });
+    });
+
+    const totalVisits = visits.length;
+    const focusScore = totalVisits
+      ? Math.max(0, Math.min(100, Math.round((((relevantVisits * 1.25) + Math.max(0, totalVisits - distractionVisits)) / (totalVisits * 1.25)) * 100)))
+      : 0;
+
+    return {
+      totalVisits,
+      relevantVisits,
+      distractionVisits,
+      focusScore,
+      topKeywords: Array.from(keywordFrequency.entries())
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 8)
+        .map(([keyword]) => keyword)
+    };
   }
 
   async function setCurrentIntent(intentText, parser) {
     const normalizedIntent = typeof intentText === 'string' ? intentText.trim() : '';
     const now = new Date().toISOString();
     const session = normalizedIntent
-      ? {
+      ? normalizeSession({
           id: `session-${now}`,
           goal: normalizedIntent,
           createdAt: now,
           updatedAt: now,
-          parser: parser || null,
-          visits: [],
-          usefulPages: [],
-          notes: []
-        }
+          parser: parser || null
+        })
       : cloneEmptySession();
 
     await setLocalValues({
@@ -194,11 +247,12 @@
 
   async function updateSessionMeta(patch) {
     const session = await getSession();
-    const nextSession = {
+    const nextSession = normalizeSession({
       ...session,
       ...(patch || {}),
       updatedAt: new Date().toISOString()
-    };
+    });
+    nextSession.stats = computeSessionStats(nextSession);
     return persistSession(nextSession);
   }
 
@@ -213,22 +267,25 @@
     }
 
     const now = new Date().toISOString();
-    const visits = Array.isArray(session.visits) ? session.visits.slice(0, 99) : [];
+    const visits = Array.isArray(session.visits) ? session.visits.slice(0, 149) : [];
     const existingIndex = visits.findIndex((entry) => entry.url === visit.url);
     const normalizedVisit = {
       url: visit.url,
       title: visit.title || visit.url,
       label: visit.label || 'maybe',
       score: Number.isFinite(Number(visit.score)) ? Number(visit.score) : 0,
+      summary: typeof visit.summary === 'string' ? visit.summary : '',
+      matchedKeywords: Array.isArray(visit.matchedKeywords) ? visit.matchedKeywords.slice(0, 8) : [],
+      matchedPhrases: Array.isArray(visit.matchedPhrases) ? visit.matchedPhrases.slice(0, 5) : [],
+      dominantReason: visit.dominantReason || '',
+      relevanceBand: visit.relevanceBand || visit.label || 'maybe',
       savedAt: visit.savedAt || now,
-      lastVisitedAt: now,
-      matchedKeywords: Array.isArray(visit.matchedKeywords) ? visit.matchedKeywords.slice(0, 8) : []
+      lastVisitedAt: now
     };
 
     if (existingIndex >= 0) {
       visits.splice(existingIndex, 1);
     }
-
     visits.unshift(normalizedVisit);
 
     const usefulPages = Array.isArray(session.usefulPages) ? session.usefulPages.slice() : [];
@@ -240,11 +297,40 @@
       usefulPages.unshift(normalizedVisit);
     }
 
-    return persistSession({
+    const nextSession = normalizeSession({
       ...session,
       updatedAt: now,
-      visits: visits.slice(0, 100),
+      visits: visits.slice(0, 150),
       usefulPages: usefulPages.slice(0, 50)
+    });
+    nextSession.stats = computeSessionStats(nextSession);
+    return persistSession(nextSession);
+  }
+
+  async function addDriftEvent(event) {
+    if (!event || !event.url) {
+      return getSession();
+    }
+
+    const session = await getSession();
+    if (!session.goal) {
+      return session;
+    }
+
+    const driftEvents = Array.isArray(session.driftEvents) ? session.driftEvents.slice() : [];
+    driftEvents.unshift({
+      url: event.url,
+      title: event.title || event.url,
+      score: Number.isFinite(Number(event.score)) ? Number(event.score) : 0,
+      reason: event.reason || 'Low alignment with active intent.',
+      createdAt: event.createdAt || new Date().toISOString()
+    });
+
+    return persistSession({
+      ...session,
+      updatedAt: new Date().toISOString(),
+      driftEvents: driftEvents.slice(0, 40),
+      stats: computeSessionStats(session)
     });
   }
 
@@ -320,9 +406,12 @@
     getSession,
     updateSessionMeta,
     trackVisit,
+    addDriftEvent,
     addNote,
     clearSession,
     getState,
-    normalizeSettings
+    normalizeSettings,
+    normalizeSession,
+    computeSessionStats
   };
 })(globalThis);

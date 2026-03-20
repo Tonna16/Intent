@@ -4,8 +4,11 @@
     settings: null,
     styleElement: null,
     highlightedParagraphs: [],
+    highlightedBlocks: [],
+    subduedBlocks: [],
     bannerElement: null,
-    bannerDismissed: false
+    bannerDismissed: false,
+    lastDriftUrl: ''
   };
 
   function ensureStyleElement() {
@@ -25,6 +28,19 @@
       paragraph.removeAttribute('data-intent-match-score');
     });
     STATE.highlightedParagraphs = [];
+  }
+
+  function clearBlockTreatments() {
+    STATE.highlightedBlocks.forEach((block) => {
+      block.classList.remove('intent-mode-highlight-block');
+      block.removeAttribute('data-intent-block-label');
+    });
+    STATE.subduedBlocks.forEach((block) => {
+      block.classList.remove('intent-mode-subdued-block');
+      block.removeAttribute('data-intent-block-label');
+    });
+    STATE.highlightedBlocks = [];
+    STATE.subduedBlocks = [];
   }
 
   function getParagraphMatchScore(paragraphText, normalizedIntent) {
@@ -145,6 +161,24 @@
         transition: background 160ms ease, box-shadow 160ms ease;
       }
 
+      .intent-mode-highlight-block {
+        outline: 2px solid rgba(96, 165, 250, 0.45);
+        outline-offset: 6px;
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(96, 165, 250, 0.08), transparent 60%);
+      }
+
+      .intent-mode-subdued-block {
+        opacity: 0.35 !important;
+        filter: grayscale(0.15) blur(1px) !important;
+        transition: opacity 160ms ease, filter 160ms ease;
+      }
+
+      .intent-mode-subdued-block:hover {
+        opacity: 0.78 !important;
+        filter: none !important;
+      }
+
       #intent-mode-banner {
         position: fixed;
         top: 14px;
@@ -227,6 +261,30 @@
     `;
   }
 
+  function updateBlockTreatments(classification) {
+    clearBlockTreatments();
+
+    if (!classification) {
+      return;
+    }
+
+    (classification.highlightBlocks || []).slice(0, 4).forEach((block) => {
+      if (block && block.element) {
+        block.element.classList.add('intent-mode-highlight-block');
+        block.element.dataset.intentBlockLabel = 'highlight';
+        STATE.highlightedBlocks.push(block.element);
+      }
+    });
+
+    (classification.blurBlocks || []).slice(0, 6).forEach((block) => {
+      if (block && block.element) {
+        block.element.classList.add('intent-mode-subdued-block');
+        block.element.dataset.intentBlockLabel = 'subdued';
+        STATE.subduedBlocks.push(block.element);
+      }
+    });
+  }
+
   function updateParagraphHighlights(settings, classification) {
     clearHighlightedParagraphs();
 
@@ -263,9 +321,23 @@
       label: classification.label,
       score: classification.score,
       matchedKeywords: classification.intent.keywords,
+      matchedPhrases: classification.intent.phrases,
+      summary: classification.summary,
+      dominantReason: classification.matches && classification.matches[0] ? classification.matches[0] : '',
       isUseful: shouldSaveUseful,
       savedAt: new Date().toISOString()
     });
+
+    if (classification.label === 'distraction' && STATE.lastDriftUrl !== window.location.href) {
+      STATE.lastDriftUrl = window.location.href;
+      await globalScope.IntentStorage.addDriftEvent({
+        url: window.location.href,
+        title: document.title || window.location.href,
+        score: classification.score,
+        reason: classification.matches && classification.matches[0] ? classification.matches[0] : 'Page has low overlap with the active goal.',
+        createdAt: new Date().toISOString()
+      });
+    }
   }
 
   function applyBehavior(classification, settings) {
@@ -285,6 +357,7 @@
 
     updateDynamicStyles(settings, classification);
     updateParagraphHighlights(settings, classification);
+    updateBlockTreatments(classification);
     updateBanner(settings, classification);
 
     globalScope.__intentClassification = classification;
