@@ -174,19 +174,23 @@
     };
   }
 
-  function mapScoreToLabel(score) {
-    if (score >= 24) {
+  function mapScoreToLabel(score, thresholds) {
+    const normalizedThresholds = thresholds && typeof thresholds === 'object'
+      ? thresholds
+      : { relevant: 24, maybe: 10, distraction: 0 };
+
+    if (score >= normalizedThresholds.relevant) {
       return 'relevant';
     }
 
-    if (score >= 10) {
+    if (score >= normalizedThresholds.maybe) {
       return 'maybe';
     }
 
     return 'distraction';
   }
 
-  function classifyDocument(intentText) {
+  function classifyDocument(intentText, settings) {
     const normalizedIntent = normalizeIntentText(intentText);
     const pageSignals = {
       title: document.title || '',
@@ -202,7 +206,7 @@
       score: scoring.score,
       breakdown: scoring.breakdown,
       label: normalizedIntent.keywords.length || normalizedIntent.phrases.length
-        ? mapScoreToLabel(scoring.score)
+        ? mapScoreToLabel(scoring.score, settings && settings.thresholds)
         : 'maybe'
     };
   }

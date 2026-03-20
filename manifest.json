@@ -24,6 +24,8 @@
         "https://*/*"
       ],
       "js": [
+        "src/shared/intent-storage.js",
+        "src/shared/classifier.js",
         "src/content/content-script.js"
       ],
       "run_at": "document_idle"
