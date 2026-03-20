@@ -3,96 +3,119 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Intent Classifier</title>
+    <title>Intent Mode Browser</title>
     <style>
+      :root {
+        color-scheme: light;
+        --bg: #eff6ff;
+        --panel: rgba(255, 255, 255, 0.96);
+        --text: #0f172a;
+        --muted: #475569;
+        --border: rgba(148, 163, 184, 0.35);
+        --accent: #2563eb;
+        --green: #16a34a;
+        --amber: #d97706;
+        --red: #dc2626;
+      }
+      * { box-sizing: border-box; }
       body {
-        font-family: Arial, sans-serif;
+        font-family: Inter, Arial, sans-serif;
         margin: 0;
         padding: 16px;
-        width: 320px;
-        color: #1f2937;
-        background: #f8fafc;
+        width: 380px;
+        color: var(--text);
+        background: linear-gradient(180deg, #dbeafe, var(--bg));
       }
-
-      h1 {
-        font-size: 18px;
-        margin: 0 0 12px;
+      h1,h2,h3,p { margin: 0; }
+      h1 { font-size: 20px; margin-bottom: 8px; }
+      h2 { font-size: 15px; margin-bottom: 10px; }
+      label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+      textarea, input {
+        width: 100%; padding: 10px 12px; font: inherit; border: 1px solid var(--border); border-radius: 10px;
+        background: rgba(255, 255, 255, 0.98);
       }
-
-      h2 {
-        font-size: 14px;
-        margin: 0 0 10px;
-      }
-
-      label {
-        display: block;
-        font-size: 13px;
-        font-weight: 600;
-        margin-bottom: 6px;
-      }
-
-      textarea {
-        width: 100%;
-        min-height: 96px;
-        box-sizing: border-box;
-        resize: vertical;
-        padding: 8px;
-        font: inherit;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-      }
-
+      textarea { min-height: 88px; resize: vertical; }
       button {
-        margin-top: 12px;
-        width: 100%;
-        padding: 10px 12px;
-        border: 0;
-        border-radius: 6px;
-        background: #2563eb;
-        color: white;
-        font-weight: 600;
-        cursor: pointer;
+        width: 100%; padding: 10px 12px; border: 0; border-radius: 10px; background: var(--accent); color: white;
+        font-weight: 700; cursor: pointer;
       }
-
+      button.secondary { background: white; color: var(--text); border: 1px solid var(--border); }
+      .stack { display: grid; gap: 12px; }
       .card {
-        margin-top: 14px;
-        padding: 12px;
-        border-radius: 10px;
-        background: #ffffff;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        padding: 14px; border-radius: 16px; background: var(--panel); box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+        border: 1px solid rgba(255,255,255,0.65);
       }
-
-      .metric {
-        margin: 0 0 6px;
-        font-size: 13px;
+      .hero-copy { font-size: 13px; color: var(--muted); line-height: 1.45; margin-bottom: 14px; }
+      .status { min-height: 18px; font-size: 12px; color: var(--muted); }
+      .pill {
+        display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
+        background: #e2e8f0; color: var(--text);
       }
-
-      .metric:last-child {
-        margin-bottom: 0;
-      }
-
-      .status {
-        margin-top: 10px;
-        font-size: 12px;
-        min-height: 16px;
-      }
+      .pill[data-tone="relevant"] { background: rgba(22, 163, 74, 0.14); color: var(--green); }
+      .pill[data-tone="maybe"] { background: rgba(217, 119, 6, 0.14); color: var(--amber); }
+      .pill[data-tone="distraction"] { background: rgba(220, 38, 38, 0.12); color: var(--red); }
+      .metric { font-size: 13px; color: var(--muted); line-height: 1.45; }
+      .list { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+      .list li { font-size: 12px; color: var(--muted); }
+      .split { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .split button { width: 100%; }
+      .mini-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 8px; }
+      .session-item + .session-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+      .session-link { display: block; color: var(--accent); text-decoration: none; font-size: 13px; font-weight: 600; }
+      .session-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
     </style>
   </head>
   <body>
-    <h1>Current intent</h1>
-    <label for="intent-input">Describe what you want to stay focused on.</label>
-    <textarea id="intent-input" placeholder="Example: research chrome extension content scripts and storage APIs"></textarea>
-    <button id="save-intent" type="button">Save intent</button>
-    <div class="status" id="status-message" aria-live="polite"></div>
+    <div class="stack">
+      <section class="card">
+        <h1>Intent Mode Browser</h1>
+        <p class="hero-copy">Set a goal, parse it into a focused session, and let the extension score each page against what you are actually trying to do.</p>
+        <label for="intent-input">Current goal</label>
+        <textarea id="intent-input" placeholder="Example: I am coding a Chrome extension for intent-aware browsing"></textarea>
+        <div class="split" style="margin-top:12px;">
+          <button id="save-intent" type="button">Start session</button>
+          <button class="secondary" id="clear-intent" type="button">Clear</button>
+        </div>
+        <div class="status" id="status-message" aria-live="polite"></div>
+      </section>
 
-    <section class="card" aria-live="polite">
-      <h2>Active page</h2>
-      <p class="metric" id="page-status">No page classification available yet.</p>
-      <p class="metric" id="page-score">Score: —</p>
-      <p class="metric" id="page-keywords">Matched keywords: none</p>
-    </section>
+      <section class="card">
+        <h2>Intent parser</h2>
+        <p class="metric"><span class="mini-title">Mode</span><span id="intent-mode">—</span></p>
+        <p class="metric"><span class="mini-title">Topic</span><span id="intent-topic">No active topic</span></p>
+        <p class="metric"><span class="mini-title">Keywords</span><span id="intent-keywords">None yet</span></p>
+        <p class="metric"><span class="mini-title">Distractors to suppress</span><span id="intent-distractors">None yet</span></p>
+        <p class="metric"><span class="mini-title">Suggested tools</span><span id="intent-tools">None yet</span></p>
+      </section>
 
-    <script src="src/shared/intent-storage.js"></script>
-    <script src="src/popup/popup.js"></script>
+      <section class="card" aria-live="polite">
+        <h2>Active page</h2>
+        <p><span class="pill" id="page-status-pill" data-tone="maybe">No classification yet</span></p>
+        <p class="metric" id="page-summary" style="margin-top:10px;">Open a page to see how well it matches your goal.</p>
+        <p class="metric" id="page-score">Score: —</p>
+        <p class="metric" id="page-keywords">Matched keywords: none</p>
+        <p class="metric" id="page-matches">Why: no evidence yet</p>
+      </section>
+
+      <section class="card">
+        <h2>Session memory</h2>
+        <div>
+          <div class="mini-title">Useful pages</div>
+          <div id="useful-pages"><p class="metric">No saved pages yet.</p></div>
+        </div>
+        <div style="margin-top:14px;">
+          <label for="session-note">Quick note</label>
+          <input id="session-note" type="text" placeholder="Capture what you learned or what to do next">
+          <div class="split" style="margin-top:10px;">
+            <button id="save-note" type="button">Save note</button>
+            <button class="secondary" id="open-options" type="button">Settings</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="../shared/intent-storage.js"></script>
+    <script src="../shared/classifier.js"></script>
+    <script src="popup.js"></script>
   </body>
 </html>

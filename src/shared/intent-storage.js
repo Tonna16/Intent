@@ -1,18 +1,32 @@
 (function initIntentStorage(globalScope) {
   const STORAGE_KEYS = {
     currentIntent: 'currentUserIntent',
-    settings: 'intentModeSettings'
+    settings: 'intentModeSettings',
+    session: 'intentModeSession'
   };
 
   const DEFAULT_SETTINGS = {
     hideYouTubeShorts: true,
     blurRecommendedFeeds: false,
     highlightRelevantParagraphs: true,
+    autoSaveRelevantPages: true,
+    showDriftBanner: true,
     thresholds: {
       relevant: 24,
       maybe: 10,
       distraction: 0
     }
+  };
+
+  const EMPTY_SESSION = {
+    id: '',
+    goal: '',
+    createdAt: '',
+    updatedAt: '',
+    parser: null,
+    visits: [],
+    usefulPages: [],
+    notes: []
   };
 
   function hasChromeStorage() {
@@ -23,6 +37,15 @@
     return {
       ...DEFAULT_SETTINGS,
       thresholds: { ...DEFAULT_SETTINGS.thresholds }
+    };
+  }
+
+  function cloneEmptySession() {
+    return {
+      ...EMPTY_SESSION,
+      visits: [],
+      usefulPages: [],
+      notes: []
     };
   }
 
@@ -51,6 +74,14 @@
 
     if (typeof rawSettings.highlightRelevantParagraphs === 'boolean') {
       mergedSettings.highlightRelevantParagraphs = rawSettings.highlightRelevantParagraphs;
+    }
+
+    if (typeof rawSettings.autoSaveRelevantPages === 'boolean') {
+      mergedSettings.autoSaveRelevantPages = rawSettings.autoSaveRelevantPages;
+    }
+
+    if (typeof rawSettings.showDriftBanner === 'boolean') {
+      mergedSettings.showDriftBanner = rawSettings.showDriftBanner;
     }
 
     const rawThresholds = rawSettings.thresholds && typeof rawSettings.thresholds === 'object'
@@ -115,9 +146,131 @@
     return typeof result[STORAGE_KEYS.currentIntent] === 'string' ? result[STORAGE_KEYS.currentIntent] : '';
   }
 
-  function setCurrentIntent(intentText) {
+  async function getSession() {
+    const result = await getLocalValues([STORAGE_KEYS.session]);
+    const session = result[STORAGE_KEYS.session];
+
+    if (!session || typeof session !== 'object') {
+      return cloneEmptySession();
+    }
+
+    return {
+      ...cloneEmptySession(),
+      ...session,
+      visits: Array.isArray(session.visits) ? session.visits : [],
+      usefulPages: Array.isArray(session.usefulPages) ? session.usefulPages : [],
+      notes: Array.isArray(session.notes) ? session.notes : []
+    };
+  }
+
+  async function persistSession(session) {
+    await setLocalValues({ [STORAGE_KEYS.session]: session });
+    return session;
+  }
+
+  async function setCurrentIntent(intentText, parser) {
     const normalizedIntent = typeof intentText === 'string' ? intentText.trim() : '';
-    return setLocalValues({ [STORAGE_KEYS.currentIntent]: normalizedIntent }).then(() => normalizedIntent);
+    const now = new Date().toISOString();
+    const session = normalizedIntent
+      ? {
+          id: `session-${now}`,
+          goal: normalizedIntent,
+          createdAt: now,
+          updatedAt: now,
+          parser: parser || null,
+          visits: [],
+          usefulPages: [],
+          notes: []
+        }
+      : cloneEmptySession();
+
+    await setLocalValues({
+      [STORAGE_KEYS.currentIntent]: normalizedIntent,
+      [STORAGE_KEYS.session]: session
+    });
+
+    return normalizedIntent;
+  }
+
+  async function updateSessionMeta(patch) {
+    const session = await getSession();
+    const nextSession = {
+      ...session,
+      ...(patch || {}),
+      updatedAt: new Date().toISOString()
+    };
+    return persistSession(nextSession);
+  }
+
+  async function trackVisit(visit) {
+    if (!visit || !visit.url) {
+      return getSession();
+    }
+
+    const session = await getSession();
+    if (!session.goal) {
+      return session;
+    }
+
+    const now = new Date().toISOString();
+    const visits = Array.isArray(session.visits) ? session.visits.slice(0, 99) : [];
+    const existingIndex = visits.findIndex((entry) => entry.url === visit.url);
+    const normalizedVisit = {
+      url: visit.url,
+      title: visit.title || visit.url,
+      label: visit.label || 'maybe',
+      score: Number.isFinite(Number(visit.score)) ? Number(visit.score) : 0,
+      savedAt: visit.savedAt || now,
+      lastVisitedAt: now,
+      matchedKeywords: Array.isArray(visit.matchedKeywords) ? visit.matchedKeywords.slice(0, 8) : []
+    };
+
+    if (existingIndex >= 0) {
+      visits.splice(existingIndex, 1);
+    }
+
+    visits.unshift(normalizedVisit);
+
+    const usefulPages = Array.isArray(session.usefulPages) ? session.usefulPages.slice() : [];
+    if (visit.isUseful) {
+      const usefulIndex = usefulPages.findIndex((entry) => entry.url === normalizedVisit.url);
+      if (usefulIndex >= 0) {
+        usefulPages.splice(usefulIndex, 1);
+      }
+      usefulPages.unshift(normalizedVisit);
+    }
+
+    return persistSession({
+      ...session,
+      updatedAt: now,
+      visits: visits.slice(0, 100),
+      usefulPages: usefulPages.slice(0, 50)
+    });
+  }
+
+  async function addNote(text) {
+    const normalizedText = typeof text === 'string' ? text.trim() : '';
+    if (!normalizedText) {
+      return getSession();
+    }
+
+    const session = await getSession();
+    const notes = Array.isArray(session.notes) ? session.notes.slice() : [];
+    notes.unshift({ text: normalizedText, createdAt: new Date().toISOString() });
+
+    return persistSession({
+      ...session,
+      updatedAt: new Date().toISOString(),
+      notes: notes.slice(0, 30)
+    });
+  }
+
+  async function clearSession() {
+    await setLocalValues({
+      [STORAGE_KEYS.currentIntent]: '',
+      [STORAGE_KEYS.session]: cloneEmptySession()
+    });
+    return cloneEmptySession();
   }
 
   async function getSettings() {
@@ -141,14 +294,16 @@
   }
 
   async function getState() {
-    const [currentIntent, settings] = await Promise.all([
+    const [currentIntent, settings, session] = await Promise.all([
       getCurrentIntent(),
-      getSettings()
+      getSettings(),
+      getSession()
     ]);
 
     return {
       currentIntent,
-      settings
+      settings,
+      session
     };
   }
 
@@ -156,11 +311,17 @@
     STORAGE_KEYS,
     STORAGE_KEY: STORAGE_KEYS.currentIntent,
     DEFAULT_SETTINGS: cloneDefaults(),
+    EMPTY_SESSION: cloneEmptySession(),
     hasChromeStorage,
     getCurrentIntent,
     setCurrentIntent,
     getSettings,
     setSettings,
+    getSession,
+    updateSessionMeta,
+    trackVisit,
+    addNote,
+    clearSession,
     getState,
     normalizeSettings
   };
