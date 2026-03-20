@@ -4,7 +4,8 @@
     settings: null,
     styleElement: null,
     highlightedParagraphs: [],
-    bannerElement: null
+    bannerElement: null,
+    bannerDismissed: false
   };
 
   function ensureStyleElement() {
@@ -47,6 +48,46 @@
     return score;
   }
 
+
+  function getBannerDismissKey(classification) {
+    if (!classification || !classification.intent) {
+      return '';
+    }
+
+    return `intent-mode-banner-dismissed::${window.location.href}::${classification.intent.normalizedText || ''}::${classification.label}`;
+  }
+
+  function isBannerDismissed(classification) {
+    const storageKey = getBannerDismissKey(classification);
+    if (!storageKey) {
+      return false;
+    }
+
+    try {
+      return window.sessionStorage.getItem(storageKey) === '1';
+    } catch (error) {
+      return STATE.bannerDismissed;
+    }
+  }
+
+  function dismissBanner(classification) {
+    STATE.bannerDismissed = true;
+    const storageKey = getBannerDismissKey(classification);
+
+    if (storageKey) {
+      try {
+        window.sessionStorage.setItem(storageKey, '1');
+      } catch (error) {
+        // Ignore storage failures and still hide the banner for this page lifecycle.
+      }
+    }
+
+    if (STATE.bannerElement) {
+      STATE.bannerElement.remove();
+      STATE.bannerElement = null;
+    }
+  }
+
   function ensureBannerElement() {
     if (STATE.bannerElement && document.body.contains(STATE.bannerElement)) {
       return STATE.bannerElement;
@@ -54,14 +95,15 @@
 
     const banner = document.createElement('div');
     banner.id = 'intent-mode-banner';
-    banner.innerHTML = '<strong id="intent-mode-banner-title"></strong><span id="intent-mode-banner-copy"></span>';
+    banner.innerHTML = '<button id="intent-mode-banner-close" type="button" aria-label="Dismiss alignment banner">×</button><strong id="intent-mode-banner-title"></strong><span id="intent-mode-banner-copy"></span>';
+    banner.querySelector('#intent-mode-banner-close').addEventListener('click', () => dismissBanner(STATE.classification));
     document.body.appendChild(banner);
     STATE.bannerElement = banner;
     return banner;
   }
 
   function updateBanner(settings, classification) {
-    if (!settings.showDriftBanner || !classification || !classification.intent || !classification.intent.topic) {
+    if (!settings.showDriftBanner || !classification || !classification.intent || !classification.intent.topic || isBannerDismissed(classification)) {
       if (STATE.bannerElement) {
         STATE.bannerElement.remove();
         STATE.bannerElement = null;
@@ -110,7 +152,8 @@
         z-index: 2147483647;
         max-width: min(420px, calc(100vw - 28px));
         display: grid;
-        gap: 4px;
+        grid-template-columns: 1fr auto;
+        gap: 4px 12px;
         padding: 12px 14px;
         border-radius: 14px;
         color: #e2e8f0;
@@ -121,6 +164,31 @@
 
       #intent-mode-banner strong {
         font-size: 13px;
+      }
+
+      #intent-mode-banner-copy {
+        grid-column: 1 / 2;
+      }
+
+      #intent-mode-banner-close {
+        grid-column: 2 / 3;
+        grid-row: 1 / 3;
+        align-self: start;
+        border: 0;
+        padding: 0;
+        width: 20px;
+        height: 20px;
+        border-radius: 999px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font: 16px/1 Arial, sans-serif;
+        opacity: 0.72;
+      }
+
+      #intent-mode-banner-close:hover {
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.08);
       }
 
       #intent-mode-banner[data-tone="relevant"] {
@@ -201,6 +269,13 @@
   }
 
   function applyBehavior(classification, settings) {
+    const nextDismissKey = getBannerDismissKey(classification);
+    const previousDismissKey = getBannerDismissKey(STATE.classification);
+
+    if (nextDismissKey !== previousDismissKey) {
+      STATE.bannerDismissed = isBannerDismissed(classification);
+    }
+
     STATE.classification = classification;
     STATE.settings = settings;
 
