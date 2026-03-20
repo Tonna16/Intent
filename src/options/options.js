@@ -7,6 +7,8 @@
     hideYouTubeShorts: document.getElementById('hide-youtube-shorts'),
     blurRecommendedFeeds: document.getElementById('blur-recommended-feeds'),
     highlightRelevantParagraphs: document.getElementById('highlight-relevant-paragraphs'),
+    autoSaveRelevantPages: document.getElementById('auto-save-relevant-pages'),
+    showDriftBanner: document.getElementById('show-drift-banner'),
     thresholdRelevant: document.getElementById('threshold-relevant'),
     thresholdMaybe: document.getElementById('threshold-maybe'),
     thresholdDistraction: document.getElementById('threshold-distraction')
@@ -25,6 +27,8 @@
     fields.hideYouTubeShorts.checked = settings.hideYouTubeShorts;
     fields.blurRecommendedFeeds.checked = settings.blurRecommendedFeeds;
     fields.highlightRelevantParagraphs.checked = settings.highlightRelevantParagraphs;
+    fields.autoSaveRelevantPages.checked = settings.autoSaveRelevantPages;
+    fields.showDriftBanner.checked = settings.showDriftBanner;
     fields.thresholdRelevant.value = String(settings.thresholds.relevant);
     fields.thresholdMaybe.value = String(settings.thresholds.maybe);
     fields.thresholdDistraction.value = String(settings.thresholds.distraction);
@@ -57,6 +61,8 @@
         hideYouTubeShorts: fields.hideYouTubeShorts.checked,
         blurRecommendedFeeds: fields.blurRecommendedFeeds.checked,
         highlightRelevantParagraphs: fields.highlightRelevantParagraphs.checked,
+        autoSaveRelevantPages: fields.autoSaveRelevantPages.checked,
+        showDriftBanner: fields.showDriftBanner.checked,
         thresholds: {
           relevant: fields.thresholdRelevant.value,
           maybe: fields.thresholdMaybe.value,

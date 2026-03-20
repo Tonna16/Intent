@@ -3,7 +3,8 @@
     classification: null,
     settings: null,
     styleElement: null,
-    highlightedParagraphs: []
+    highlightedParagraphs: [],
+    bannerElement: null
   };
 
   function ensureStyleElement() {
@@ -46,6 +47,48 @@
     return score;
   }
 
+  function ensureBannerElement() {
+    if (STATE.bannerElement && document.body.contains(STATE.bannerElement)) {
+      return STATE.bannerElement;
+    }
+
+    const banner = document.createElement('div');
+    banner.id = 'intent-mode-banner';
+    banner.innerHTML = '<strong id="intent-mode-banner-title"></strong><span id="intent-mode-banner-copy"></span>';
+    document.body.appendChild(banner);
+    STATE.bannerElement = banner;
+    return banner;
+  }
+
+  function updateBanner(settings, classification) {
+    if (!settings.showDriftBanner || !classification || !classification.intent || !classification.intent.topic) {
+      if (STATE.bannerElement) {
+        STATE.bannerElement.remove();
+        STATE.bannerElement = null;
+      }
+      return;
+    }
+
+    const banner = ensureBannerElement();
+    const title = banner.querySelector('#intent-mode-banner-title');
+    const copy = banner.querySelector('#intent-mode-banner-copy');
+    const topic = classification.intent.topic;
+
+    if (classification.label === 'relevant') {
+      title.textContent = `On goal: ${topic}`;
+      copy.textContent = `Relevant page • score ${classification.score}`;
+      banner.dataset.tone = 'relevant';
+    } else if (classification.label === 'maybe') {
+      title.textContent = `Check alignment: ${topic}`;
+      copy.textContent = 'This page only partially matches your current intent.';
+      banner.dataset.tone = 'maybe';
+    } else {
+      title.textContent = `Potential drift from ${topic}`;
+      copy.textContent = 'This page looks distracting. Return to your task or save it for later.';
+      banner.dataset.tone = 'distraction';
+    }
+  }
+
   function updateDynamicStyles(settings, classification) {
     const styleElement = ensureStyleElement();
     const shouldHideShorts = settings.hideYouTubeShorts && /(^|\.)youtube\.com$/i.test(window.location.hostname);
@@ -58,6 +101,38 @@
         box-shadow: inset 0 0 0 1px rgba(234, 179, 8, 0.28);
         border-radius: 8px;
         transition: background 160ms ease, box-shadow 160ms ease;
+      }
+
+      #intent-mode-banner {
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        z-index: 2147483647;
+        max-width: min(420px, calc(100vw - 28px));
+        display: grid;
+        gap: 4px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        color: #e2e8f0;
+        background: rgba(15, 23, 42, 0.92);
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.28);
+        font: 13px/1.4 Inter, Arial, sans-serif;
+      }
+
+      #intent-mode-banner strong {
+        font-size: 13px;
+      }
+
+      #intent-mode-banner[data-tone="relevant"] {
+        border-left: 4px solid #22c55e;
+      }
+
+      #intent-mode-banner[data-tone="maybe"] {
+        border-left: 4px solid #f59e0b;
+      }
+
+      #intent-mode-banner[data-tone="distraction"] {
+        border-left: 4px solid #ef4444;
       }
 
       ${shouldHideShorts ? `
@@ -97,9 +172,7 @@
     }
 
     Array.from(document.querySelectorAll('p')).forEach((paragraph) => {
-      const paragraphText = globalScope.IntentClassifier
-        .normalizeIntentText(paragraph.innerText || paragraph.textContent || '')
-        .normalizedText;
+      const paragraphText = globalScope.IntentClassifier.normalizeIntentText(paragraph.innerText || paragraph.textContent || '').normalizedText;
       const matchScore = getParagraphMatchScore(paragraphText, normalizedIntent);
 
       if (matchScore > 0) {
@@ -107,6 +180,23 @@
         paragraph.dataset.intentMatchScore = String(matchScore);
         STATE.highlightedParagraphs.push(paragraph);
       }
+    });
+  }
+
+  async function syncVisit(classification, settings) {
+    if (!globalScope.IntentStorage || !classification || !classification.intent || !classification.intent.topic) {
+      return;
+    }
+
+    const shouldSaveUseful = settings.autoSaveRelevantPages && classification.label === 'relevant';
+    await globalScope.IntentStorage.trackVisit({
+      url: window.location.href,
+      title: document.title || window.location.href,
+      label: classification.label,
+      score: classification.score,
+      matchedKeywords: classification.intent.keywords,
+      isUseful: shouldSaveUseful,
+      savedAt: new Date().toISOString()
     });
   }
 
@@ -120,11 +210,10 @@
 
     updateDynamicStyles(settings, classification);
     updateParagraphHighlights(settings, classification);
+    updateBanner(settings, classification);
 
     globalScope.__intentClassification = classification;
-    document.dispatchEvent(new CustomEvent('intent-classification-updated', {
-      detail: classification
-    }));
+    document.dispatchEvent(new CustomEvent('intent-classification-updated', { detail: classification }));
   }
 
   async function classifyCurrentPage() {
@@ -134,18 +223,19 @@
 
     try {
       const state = await globalScope.IntentStorage.getState();
-      const classification = globalScope.IntentClassifier.classifyDocument(
-        state.currentIntent,
-        state.settings
-      );
-
+      const classification = globalScope.IntentClassifier.classifyDocument(state.currentIntent, state.settings);
       applyBehavior(classification, state.settings);
+      await syncVisit(classification, state.settings);
     } catch (error) {
       console.error('Intent classification failed.', error);
     }
   }
 
-  classifyCurrentPage();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', classifyCurrentPage, { once: true });
+  } else {
+    classifyCurrentPage();
+  }
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -157,6 +247,21 @@
       if (changes[STORAGE_KEYS.currentIntent] || changes[STORAGE_KEYS.settings]) {
         classifyCurrentPage();
       }
+    });
+  }
+
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (!message || typeof message !== 'object') {
+        return undefined;
+      }
+
+      if (message.type === 'intent:getClassificationState') {
+        sendResponse({ classification: STATE.classification });
+        return true;
+      }
+
+      return undefined;
     });
   }
 })(globalThis);
