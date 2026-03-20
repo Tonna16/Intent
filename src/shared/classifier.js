@@ -9,6 +9,10 @@
     return Array.from(new Set(values.filter(Boolean)));
   }
 
+  function normalizeWhitespace(text) {
+    return (text || '').replace(/\s+/g, ' ').trim();
+  }
+
   function normalizeToken(token) {
     return token
       .toLowerCase()
@@ -16,8 +20,12 @@
       .trim();
   }
 
+  function normalizeText(text) {
+    return normalizeWhitespace(normalizeToken(text));
+  }
+
   function normalizeIntentText(intentText) {
-    const normalizedText = normalizeToken(intentText).replace(/\s+/g, ' ').trim();
+    const normalizedText = normalizeText(intentText);
     if (!normalizedText) {
       return {
         normalizedText: '',
@@ -53,6 +61,20 @@
     };
   }
 
+  function isElementVisible(element) {
+    if (!element) {
+      return false;
+    }
+
+    const computedStyle = window.getComputedStyle(element);
+    return !(
+      computedStyle.display === 'none' ||
+      computedStyle.visibility === 'hidden' ||
+      element.hidden ||
+      element.getAttribute('aria-hidden') === 'true'
+    );
+  }
+
   function getVisibleTextNodes(rootNode) {
     const walker = document.createTreeWalker(rootNode || document.body, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
@@ -70,13 +92,7 @@
           return NodeFilter.FILTER_REJECT;
         }
 
-        const computedStyle = window.getComputedStyle(parentElement);
-        if (
-          computedStyle.display === 'none' ||
-          computedStyle.visibility === 'hidden' ||
-          parentElement.hidden ||
-          parentElement.getAttribute('aria-hidden') === 'true'
-        ) {
+        if (!isElementVisible(parentElement)) {
           return NodeFilter.FILTER_REJECT;
         }
 
@@ -97,7 +113,7 @@
   function extractVisiblePageText() {
     const textNodes = getVisibleTextNodes(document.body);
     return textNodes
-      .map((node) => node.textContent.replace(/\s+/g, ' ').trim())
+      .map((node) => normalizeWhitespace(node.textContent))
       .filter(Boolean)
       .join(' ')
       .trim();
@@ -105,16 +121,58 @@
 
   function getHeadingText() {
     return Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
-      .map((heading) => heading.innerText.replace(/\s+/g, ' ').trim())
+      .map((heading) => normalizeWhitespace(heading.innerText))
       .filter(Boolean)
       .join(' ');
   }
 
   function getParagraphText() {
-    return Array.from(document.querySelectorAll('p'))
-      .map((paragraph) => paragraph.innerText.replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
+    return extractParagraphSignals()
+      .map((paragraph) => paragraph.text)
       .join(' ');
+  }
+
+  function getElementText(element) {
+    return normalizeWhitespace(element && (element.innerText || element.textContent || ''));
+  }
+
+  function extractParagraphSignals(rootNode) {
+    const selectors = [
+      'article p',
+      'main p',
+      '[role="main"] p',
+      'p',
+      'article li',
+      'main li',
+      '[role="main"] li',
+      '[data-Intent-content-block]',
+      'article blockquote',
+      'main blockquote'
+    ];
+
+    const paragraphs = [];
+    const seenElements = new Set();
+
+    selectors.forEach((selector) => {
+      Array.from((rootNode || document).querySelectorAll(selector)).forEach((element) => {
+        if (seenElements.has(element) || !isElementVisible(element)) {
+          return;
+        }
+
+        const text = getElementText(element);
+        if (text.length < 40) {
+          return;
+        }
+
+        seenElements.add(element);
+        paragraphs.push({
+          element,
+          text
+        });
+      });
+    });
+
+    return paragraphs;
   }
 
   function countOccurrences(haystack, needle) {
@@ -122,15 +180,15 @@
       return 0;
     }
 
-    const matches = haystack.match(new RegExp(`\\b${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'));
+    const matches = haystack.match(new RegExp(`\\b${needle.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'g'));
     return matches ? matches.length : 0;
   }
 
   function scorePage(intent, pageSignals) {
-    const titleText = normalizeToken(pageSignals.title || '').replace(/\s+/g, ' ').trim();
-    const headingText = normalizeToken(pageSignals.headings || '').replace(/\s+/g, ' ').trim();
-    const pageText = normalizeToken(pageSignals.pageText || '').replace(/\s+/g, ' ').trim();
-    const paragraphText = normalizeToken(pageSignals.paragraphs || '').replace(/\s+/g, ' ').trim();
+    const titleText = normalizeText(pageSignals.title || '');
+    const headingText = normalizeText(pageSignals.headings || '');
+    const pageText = normalizeText(pageSignals.pageText || '');
+    const paragraphText = normalizeText(pageSignals.paragraphs || '');
 
     let score = 0;
     const breakdown = {
@@ -174,6 +232,68 @@
     };
   }
 
+  function scoreContentBlock(intent, text) {
+    const normalizedBlockText = normalizeText(text);
+    const breakdown = {
+      keywordMatches: 0,
+      phraseMatches: 0,
+      coverage: 0,
+      totalMatches: 0
+    };
+
+    if (!normalizedBlockText || (!intent.keywords.length && !intent.phrases.length)) {
+      return {
+        score: 0,
+        breakdown,
+        normalizedText: normalizedBlockText,
+        isRelevant: false
+      };
+    }
+
+    let matchedKeywords = 0;
+    intent.keywords.forEach((keyword) => {
+      const matches = countOccurrences(normalizedBlockText, keyword);
+      if (matches > 0) {
+        matchedKeywords += 1;
+      }
+      breakdown.keywordMatches += Math.min(matches, 4) * 2;
+      breakdown.totalMatches += matches;
+    });
+
+    intent.phrases.forEach((phrase) => {
+      if (normalizedBlockText.includes(phrase)) {
+        breakdown.phraseMatches += 5;
+        breakdown.totalMatches += 1;
+      }
+    });
+
+    if (intent.keywords.length) {
+      breakdown.coverage = Math.round((matchedKeywords / intent.keywords.length) * 6);
+    }
+
+    const score = breakdown.keywordMatches + breakdown.phraseMatches + breakdown.coverage;
+    return {
+      score,
+      breakdown,
+      normalizedText: normalizedBlockText,
+      isRelevant: score >= 6
+    };
+  }
+
+  function scoreParagraphsAgainstIntent(intent, paragraphSignals) {
+    return (paragraphSignals || []).map((paragraph) => {
+      const scoring = scoreContentBlock(intent, paragraph.text);
+      return {
+        element: paragraph.element,
+        text: paragraph.text,
+        score: scoring.score,
+        breakdown: scoring.breakdown,
+        normalizedText: scoring.normalizedText,
+        isRelevant: scoring.isRelevant
+      };
+    });
+  }
+
   function mapScoreToLabel(score) {
     if (score >= 24) {
       return 'relevant';
@@ -188,10 +308,11 @@
 
   function classifyDocument(intentText) {
     const normalizedIntent = normalizeIntentText(intentText);
+    const paragraphSignals = extractParagraphSignals();
     const pageSignals = {
       title: document.title || '',
       headings: getHeadingText(),
-      paragraphs: getParagraphText(),
+      paragraphs: paragraphSignals.map((paragraph) => paragraph.text).join(' '),
       pageText: extractVisiblePageText()
     };
 
@@ -199,6 +320,7 @@
     return {
       intent: normalizedIntent,
       pageSignals,
+      paragraphSignals: scoreParagraphsAgainstIntent(normalizedIntent, paragraphSignals),
       score: scoring.score,
       breakdown: scoring.breakdown,
       label: normalizedIntent.keywords.length || normalizedIntent.phrases.length
@@ -209,7 +331,11 @@
 
   globalScope.IntentClassifier = {
     normalizeIntentText,
+    normalizeText,
     extractVisiblePageText,
+    extractParagraphSignals,
+    scoreContentBlock,
+    scoreParagraphsAgainstIntent,
     scorePage,
     mapScoreToLabel,
     classifyDocument
