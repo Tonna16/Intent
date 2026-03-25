@@ -30,6 +30,23 @@
     apply: ['job tracker', 'resume', 'calendar', 'company board']
   };
 
+  const DISTRACTOR_PATTERNS = [
+    'shorts',
+    'reels',
+    'fyp',
+    'for you',
+    'trending',
+    'viral',
+    'meme',
+    'celebrity',
+    'gossip',
+    'shop',
+    'shopping',
+    'deal',
+    'livestream',
+    'streamer'
+  ];
+
 
   const KEYWORD_SYNONYMS = {
     computer: ['computers', 'computing', 'software', 'hardware'],
@@ -296,10 +313,23 @@
     const pageText = normalizeToken(pageSignals.pageText || '').replace(/\s+/g, ' ').trim();
     const paragraphText = normalizeToken(pageSignals.paragraphs || '').replace(/\s+/g, ' ').trim();
     const domainText = normalizeToken(pageSignals.domain || '').replace(/\s+/g, ' ').trim();
+    const urlText = normalizeToken(pageSignals.url || '').replace(/\s+/g, ' ').trim();
 
-    const breakdown = { titleMatches: 0, headingMatches: 0, keywordFrequency: 0, paragraphDensity: 0, phraseMatches: 0, domainMatches: 0, coverageBonus: 0 };
+    const breakdown = {
+      titleMatches: 0,
+      headingMatches: 0,
+      keywordFrequency: 0,
+      paragraphDensity: 0,
+      phraseMatches: 0,
+      domainMatches: 0,
+      urlMatches: 0,
+      coverageBonus: 0,
+      intentCoverageBoost: 0,
+      distractorPenalty: 0
+    };
 
     let matchedKeywordCount = 0;
+    const matchedKeywords = new Set();
 
     intent.keywords.forEach((keyword) => {
       const titleMatches = countOccurrences(titleText, keyword);
@@ -307,11 +337,13 @@
       const bodyMatches = countOccurrences(pageText, keyword);
       const paragraphMatches = countOccurrences(paragraphText, keyword);
       const domainMatches = countOccurrences(domainText, keyword);
+      const urlMatches = countOccurrences(urlText, keyword);
 
       breakdown.titleMatches += titleMatches * 6;
       breakdown.headingMatches += headingMatches * 4;
       breakdown.keywordFrequency += Math.min(bodyMatches, 12);
       breakdown.domainMatches += domainMatches * 5;
+      breakdown.urlMatches += urlMatches * 4;
 
       if (paragraphMatches >= 2) {
         breakdown.paragraphDensity += 3;
@@ -319,8 +351,9 @@
         breakdown.paragraphDensity += 1;
       }
 
-      if (titleMatches > 0 || headingMatches > 0 || bodyMatches > 0 || paragraphMatches > 0 || domainMatches > 0) {
+      if (titleMatches > 0 || headingMatches > 0 || bodyMatches > 0 || paragraphMatches > 0 || domainMatches > 0 || urlMatches > 0) {
         matchedKeywordCount += 1;
+        matchedKeywords.add(keyword);
       }
     });
 
@@ -337,9 +370,29 @@
       const headingPhraseMatch = headingText.includes(phrase) ? 1 : 0;
       const bodyPhraseMatch = pageText.includes(phrase) ? 1 : 0;
       const domainPhraseMatch = domainText.includes(phrase) ? 1 : 0;
+      const urlPhraseMatch = urlText.includes(phrase) ? 1 : 0;
 
-      breakdown.phraseMatches += (titlePhraseMatch * 8) + (headingPhraseMatch * 5) + (bodyPhraseMatch * 3) + (domainPhraseMatch * 4);
+      breakdown.phraseMatches += (titlePhraseMatch * 8) + (headingPhraseMatch * 5) + (bodyPhraseMatch * 3) + (domainPhraseMatch * 4) + (urlPhraseMatch * 4);
     });
+
+    const keywordCoverageRatio = intent.keywords.length ? (matchedKeywords.size / intent.keywords.length) : 0;
+    if (keywordCoverageRatio >= 0.7) {
+      breakdown.intentCoverageBoost = 12;
+    } else if (keywordCoverageRatio >= 0.4) {
+      breakdown.intentCoverageBoost = 6;
+    }
+
+    const distractorSignals = unique([
+      ...DISTRACTOR_PATTERNS,
+      ...(Array.isArray(intent.distractors) ? intent.distractors : [])
+    ]);
+    const distractorText = `${titleText} ${headingText} ${domainText} ${urlText}`.trim();
+    const distractorHits = distractorSignals.reduce((total, signal) => total + (distractorText.includes(normalizeToken(signal)) ? 1 : 0), 0);
+    if (distractorHits > 0 && keywordCoverageRatio < 0.25) {
+      breakdown.distractorPenalty = -Math.min(12, distractorHits * 3);
+    } else if (distractorHits > 1 && keywordCoverageRatio < 0.5) {
+      breakdown.distractorPenalty = -Math.min(6, distractorHits * 2);
+    }
 
     return {
       score: Object.values(breakdown).reduce((total, value) => total + value, 0),
@@ -477,7 +530,8 @@
       headings: getHeadingText(),
       paragraphs: getParagraphText(),
       pageText: extractVisiblePageText(),
-      domain: window.location.hostname
+      domain: window.location.hostname,
+      url: window.location.href
     };
     const scoring = scorePage(normalizedIntent, pageSignals);
     const blocks = extractScoredBlocks(normalizedIntent, thresholds);

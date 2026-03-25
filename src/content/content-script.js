@@ -43,6 +43,24 @@
     STATE.subduedBlocks = [];
   }
 
+  function clearBehavior() {
+    clearHighlightedParagraphs();
+    clearBlockTreatments();
+    if (STATE.bannerElement) {
+      STATE.bannerElement.remove();
+      STATE.bannerElement = null;
+    }
+    if (STATE.styleElement) {
+      STATE.styleElement.textContent = '';
+    }
+
+    delete document.documentElement.dataset.intentLabel;
+    delete document.documentElement.dataset.intentScore;
+    delete document.documentElement.dataset.intentKeywords;
+
+    STATE.classification = null;
+  }
+
   function getParagraphMatchScore(paragraphText, normalizedIntent) {
     if (!paragraphText || !normalizedIntent) {
       return 0;
@@ -147,10 +165,10 @@
     }
   }
 
-  function updateDynamicStyles(settings, classification) {
+  function updateDynamicStyles(settings, classification, sessionActive) {
     const styleElement = ensureStyleElement();
     const shouldHideShorts = settings.hideYouTubeShorts && /(^|\.)youtube\.com$/i.test(window.location.hostname);
-    const shouldBlurFeeds = settings.blurRecommendedFeeds;
+    const shouldBlurFeeds = sessionActive && settings.blurRecommendedFeeds;
     const isRelevantPage = classification && classification.label === 'relevant';
 
     styleElement.textContent = `
@@ -261,7 +279,7 @@
     `;
   }
 
-  function updateBlockTreatments(classification) {
+  function updateBlockTreatments(classification, settings) {
     clearBlockTreatments();
 
     if (!classification) {
@@ -275,6 +293,10 @@
         STATE.highlightedBlocks.push(block.element);
       }
     });
+
+    if (!settings.blurRecommendedFeeds) {
+      return;
+    }
 
     (classification.blurBlocks || []).slice(0, 6).forEach((block) => {
       if (block && block.element) {
@@ -340,7 +362,12 @@
     }
   }
 
-  function applyBehavior(classification, settings) {
+  function applyBehavior(classification, settings, sessionActive) {
+    if (!sessionActive) {
+      clearBehavior();
+      return;
+    }
+
     const nextDismissKey = getBannerDismissKey(classification);
     const previousDismissKey = getBannerDismissKey(STATE.classification);
 
@@ -355,9 +382,9 @@
     document.documentElement.dataset.intentScore = String(classification.score);
     document.documentElement.dataset.intentKeywords = classification.intent.keywords.join(',');
 
-    updateDynamicStyles(settings, classification);
+    updateDynamicStyles(settings, classification, sessionActive);
     updateParagraphHighlights(settings, classification);
-    updateBlockTreatments(classification);
+    updateBlockTreatments(classification, settings);
     updateBanner(settings, classification);
 
     globalScope.__intentClassification = classification;
@@ -371,8 +398,13 @@
 
     try {
       const state = await globalScope.IntentStorage.getState();
+      const hasActiveIntent = Boolean((state.currentIntent || '').trim());
+      if (!hasActiveIntent) {
+        clearBehavior();
+        return;
+      }
       const classification = globalScope.IntentClassifier.classifyDocument(state.currentIntent, state.settings);
-      applyBehavior(classification, state.settings);
+      applyBehavior(classification, state.settings, hasActiveIntent);
       await syncVisit(classification, state.settings);
     } catch (error) {
       console.error('Intent classification failed.', error);
