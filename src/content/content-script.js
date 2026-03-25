@@ -441,6 +441,11 @@
         return true;
       }
 
+      if (message.type === 'intent:refreshClassification') {
+        classifyCurrentPage().finally(() => sendResponse({ ok: true }));
+        return true;
+      }
+
       return undefined;
     });
   }
