@@ -36,6 +36,18 @@
       h1,h2,h3,p { margin: 0; }
       button, input, textarea { font: inherit; }
       .stack { display: grid; gap: 14px; }
+      .window-close {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 20;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border-radius: 999px;
+        font-size: 18px;
+        line-height: 1;
+      }
       .card {
         padding: 16px;
         border-radius: 20px;
@@ -207,6 +219,7 @@
     </style>
   </head>
   <body>
+    <button id="window-close" class="window-close" type="button" aria-label="Close intent window">×</button>
     <div class="stack">
       <section class="card hero">
         <div class="eyebrow">Intent workspace</div>

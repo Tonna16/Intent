@@ -93,10 +93,74 @@ async function bootstrapIntentMode(reason) {
   }
 }
 
+const POPUP_WINDOW_URL = 'src/popup/popup.html?mode=window';
+const POPUP_WINDOW_WIDTH = 456;
+const POPUP_WINDOW_HEIGHT = 760;
+let popupWindowId = null;
+
+function createPopupWindow() {
+  return new Promise((resolve, reject) => {
+    chrome.windows.create({
+      url: POPUP_WINDOW_URL,
+      type: 'popup',
+      width: POPUP_WINDOW_WIDTH,
+      height: POPUP_WINDOW_HEIGHT,
+      focused: true
+    }, (createdWindow) => {
+      if (chrome.runtime && chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+
+      resolve(createdWindow);
+    });
+  });
+}
+
+function updateWindow(windowId, updateInfo) {
+  return new Promise((resolve, reject) => {
+    chrome.windows.update(windowId, updateInfo, (updatedWindow) => {
+      if (chrome.runtime && chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+
+      resolve(updatedWindow);
+    });
+  });
+}
+
+async function openPersistentPopupWindow() {
+  if (typeof popupWindowId !== 'number') {
+    const createdWindow = await createPopupWindow();
+    popupWindowId = createdWindow && typeof createdWindow.id === 'number' ? createdWindow.id : null;
+    return;
+  }
+
+  try {
+    await updateWindow(popupWindowId, { focused: true });
+  } catch (error) {
+    const createdWindow = await createPopupWindow();
+    popupWindowId = createdWindow && typeof createdWindow.id === 'number' ? createdWindow.id : null;
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   bootstrapIntentMode('install');
 });
 
 chrome.runtime.onStartup.addListener(() => {
   bootstrapIntentMode('startup');
+});
+
+chrome.action.onClicked.addListener(() => {
+  openPersistentPopupWindow().catch((error) => {
+    console.error('Unable to open popup window.', error);
+  });
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === popupWindowId) {
+    popupWindowId = null;
+  }
 });

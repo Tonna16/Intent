@@ -25,6 +25,8 @@
   const sessionNotes = document.getElementById('session-notes');
   const topKeywords = document.getElementById('top-keywords');
   const driftEvents = document.getElementById('drift-events');
+  const windowCloseButton = document.getElementById('window-close');
+  const isWindowMode = new URLSearchParams(window.location.search).get('mode') === 'window';
 
   function escapeHtml(value) {
     return String(value || '')
@@ -254,10 +256,20 @@
     }
   }
 
+  function closeWindowUi() {
+    window.close();
+  }
+
   saveButton.addEventListener('click', saveIntent);
   clearButton.addEventListener('click', clearIntent);
   saveNoteButton.addEventListener('click', saveNote);
   openOptionsButton.addEventListener('click', openOptions);
+
+  if (isWindowMode) {
+    windowCloseButton.addEventListener('click', closeWindowUi);
+  } else if (windowCloseButton) {
+    windowCloseButton.remove();
+  }
   loadState();
   refreshPageClassification();
 })(globalThis);
