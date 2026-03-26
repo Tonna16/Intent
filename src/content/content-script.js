@@ -8,8 +8,17 @@
     subduedBlocks: [],
     bannerElement: null,
     bannerDismissed: false,
-    lastDriftUrl: ''
+    lastDriftUrl: '',
+    lastClassificationSignature: '',
+    lastKnownHref: window.location.href,
+    mutationObserver: null,
+    hrefPollTimer: null,
+    classifyDebounceTimer: null,
+    pendingClassifyTrigger: null,
+    isClassifying: false
   };
+  const CLASSIFY_DEBOUNCE_MS = 500;
+  const HREF_POLL_INTERVAL_MS = 1000;
 
   function ensureStyleElement() {
     if (STATE.styleElement && document.head.contains(STATE.styleElement)) {
@@ -44,12 +53,7 @@
   }
 
   function clearBehavior() {
-    clearHighlightedParagraphs();
-    clearBlockTreatments();
-    if (STATE.bannerElement) {
-      STATE.bannerElement.remove();
-      STATE.bannerElement = null;
-    }
+    clearVisualTreatments();
     if (STATE.styleElement) {
       STATE.styleElement.textContent = '';
     }
@@ -59,6 +63,16 @@
     delete document.documentElement.dataset.intentKeywords;
 
     STATE.classification = null;
+    STATE.lastClassificationSignature = '';
+  }
+
+  function clearVisualTreatments() {
+    clearHighlightedParagraphs();
+    clearBlockTreatments();
+    if (STATE.bannerElement) {
+      STATE.bannerElement.remove();
+      STATE.bannerElement = null;
+    }
   }
 
   function getParagraphMatchScore(paragraphText, normalizedIntent) {
@@ -386,6 +400,8 @@
     STATE.classification = classification;
     STATE.settings = settings;
 
+    clearVisualTreatments();
+
     document.documentElement.dataset.intentLabel = classification.label;
     document.documentElement.dataset.intentScore = String(classification.score);
     document.documentElement.dataset.intentKeywords = classification.intent.keywords.join(',');
@@ -399,16 +415,30 @@
     document.dispatchEvent(new CustomEvent('intent-classification-updated', { detail: classification }));
   }
 
-  async function classifyCurrentPage() {
+  function createClassificationSignature(currentIntent) {
+    return [window.location.href, document.title || '', (currentIntent || '').trim()].join('::');
+  }
+
+  async function classifyCurrentPage(options = {}) {
     if (!globalScope.IntentStorage || !globalScope.IntentClassifier) {
       return;
     }
+
+    if (STATE.isClassifying) {
+      return;
+    }
+
+    STATE.isClassifying = true;
 
     try {
       const state = await globalScope.IntentStorage.getState();
       const hasActiveIntent = Boolean((state.currentIntent || '').trim());
       if (!hasActiveIntent) {
         clearBehavior();
+        return;
+      }
+      const signature = createClassificationSignature(state.currentIntent);
+      if (!options.force && signature === STATE.lastClassificationSignature) {
         return;
       }
       const recentVisits = state.session && Array.isArray(state.session.visits)
@@ -427,16 +457,131 @@
       });
       applyBehavior(classification, state.settings, hasActiveIntent);
       await syncVisit(classification, state.settings);
+      STATE.lastClassificationSignature = signature;
     } catch (error) {
       console.error('Intent classification failed.', error);
+    } finally {
+      STATE.isClassifying = false;
     }
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', classifyCurrentPage, { once: true });
-  } else {
-    classifyCurrentPage();
+  function scheduleClassification(trigger, options = {}) {
+    STATE.pendingClassifyTrigger = STATE.pendingClassifyTrigger || trigger;
+
+    if (options.force) {
+      STATE.pendingClassifyTrigger = `${STATE.pendingClassifyTrigger},${trigger}:force`;
+    }
+
+    if (STATE.classifyDebounceTimer) {
+      clearTimeout(STATE.classifyDebounceTimer);
+    }
+
+    STATE.classifyDebounceTimer = window.setTimeout(() => {
+      const pendingTrigger = STATE.pendingClassifyTrigger;
+      STATE.pendingClassifyTrigger = null;
+      STATE.classifyDebounceTimer = null;
+      classifyCurrentPage({ force: Boolean(options.force || (pendingTrigger && pendingTrigger.includes(':force'))) });
+    }, CLASSIFY_DEBOUNCE_MS);
   }
+
+  function handlePotentialUrlChange(trigger) {
+    const nextHref = window.location.href;
+    if (nextHref === STATE.lastKnownHref) {
+      return;
+    }
+    STATE.lastKnownHref = nextHref;
+    scheduleClassification(`url:${trigger}`, { force: true });
+  }
+
+  function installHistoryNavigationListeners() {
+    const wrapHistoryMethod = (methodName) => {
+      const original = window.history[methodName];
+      if (typeof original !== 'function') {
+        return;
+      }
+
+      window.history[methodName] = function intentModeHistoryWrapper(...args) {
+        const result = original.apply(this, args);
+        handlePotentialUrlChange(methodName);
+        return result;
+      };
+    };
+
+    wrapHistoryMethod('pushState');
+    wrapHistoryMethod('replaceState');
+    window.addEventListener('popstate', () => handlePotentialUrlChange('popstate'));
+
+    STATE.hrefPollTimer = window.setInterval(() => handlePotentialUrlChange('href-poll'), HREF_POLL_INTERVAL_MS);
+  }
+
+  function isMeaningfulMutation(mutation) {
+    if (mutation.type === 'characterData') {
+      const text = mutation.target && mutation.target.nodeValue;
+      return Boolean(text && text.trim());
+    }
+
+    if (mutation.type !== 'childList') {
+      return false;
+    }
+
+    const hasMeaningfulNode = (nodes) => Array.from(nodes || []).some((node) => {
+      if (!node) {
+        return false;
+      }
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        return Boolean((node.nodeValue || '').trim());
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return false;
+      }
+
+      const tagName = node.tagName ? node.tagName.toLowerCase() : '';
+      if (!tagName) {
+        return false;
+      }
+
+      if (['script', 'style', 'noscript', 'link', 'meta'].includes(tagName)) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return hasMeaningfulNode(mutation.addedNodes) || hasMeaningfulNode(mutation.removedNodes);
+  }
+
+  function installContentMutationObserver() {
+    if (!document.body || STATE.mutationObserver) {
+      return;
+    }
+
+    STATE.mutationObserver = new MutationObserver((mutations) => {
+      if (!mutations.some(isMeaningfulMutation)) {
+        return;
+      }
+      scheduleClassification('mutation');
+    });
+
+    STATE.mutationObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      installContentMutationObserver();
+      scheduleClassification('dom-content-loaded');
+    }, { once: true });
+  } else {
+    installContentMutationObserver();
+    scheduleClassification('initial-load');
+  }
+
+  installHistoryNavigationListeners();
 
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -446,7 +591,7 @@
 
       const { STORAGE_KEYS } = globalScope.IntentStorage;
       if (changes[STORAGE_KEYS.currentIntent] || changes[STORAGE_KEYS.settings]) {
-        classifyCurrentPage();
+        scheduleClassification('storage-change', { force: true });
       }
     });
   }
@@ -463,7 +608,8 @@
       }
 
       if (message.type === 'intent:refreshClassification') {
-        classifyCurrentPage().finally(() => sendResponse({ ok: true }));
+        scheduleClassification('message-refresh', { force: true });
+        window.setTimeout(() => sendResponse({ ok: true }), CLASSIFY_DEBOUNCE_MS + 50);
         return true;
       }
 
