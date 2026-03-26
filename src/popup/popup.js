@@ -170,12 +170,18 @@ const confidenceSuffix = typeof classification.confidence === 'number' ? ` • c
         return;
       }
 
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const queryOptions = isWindowMode
+        ? { active: true, lastFocusedWindow: true }
+        : { active: true, currentWindow: true };
+
+      chrome.tabs.query(queryOptions, (tabs) => {
         if (chrome.runtime && chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
         }
-        resolve(tabs && tabs.length ? tabs[0] : null);
+
+        const eligibleTab = (tabs || []).find((tab) => /^https?:\/\//i.test(tab.url || ''));
+        resolve(eligibleTab || null);
       });
     });
   }
@@ -222,6 +228,23 @@ const confidenceSuffix = typeof classification.confidence === 'number' ? ` • c
       renderStrictness(state.settings);
     } catch (error) {
       statusMessage.textContent = 'Unable to load saved intent.';
+    }
+  }
+
+  async function refreshSessionView() {
+    if (!globalScope.IntentStorage) {
+      return;
+    }
+
+    try {
+      const state = await globalScope.IntentStorage.getState();
+      renderStats(state.session);
+      renderUsefulPages(state.session);
+      renderNotes(state.session);
+      renderDrift(state.session);
+      renderStrictness(state.settings);
+    } catch (error) {
+      // Ignore transient update failures so the popup remains interactive.
     }
   }
 
@@ -305,6 +328,26 @@ const confidenceSuffix = typeof classification.confidence === 'number' ? ` • c
   } else if (windowCloseButton) {
     windowCloseButton.remove();
   }
+
+  if (chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !globalScope.IntentStorage) {
+        return;
+      }
+      const { STORAGE_KEYS } = globalScope.IntentStorage;
+      if (changes[STORAGE_KEYS.session] || changes[STORAGE_KEYS.settings] || changes[STORAGE_KEYS.currentIntent]) {
+        refreshSessionView();
+      }
+    });
+  }
+
+  if (isWindowMode) {
+    window.setInterval(() => {
+      refreshSessionView();
+      refreshPageClassification();
+    }, 3000);
+  }
+
   loadState();
   refreshPageClassification();
 })(globalThis);
