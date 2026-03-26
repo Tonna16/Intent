@@ -104,7 +104,15 @@
     ai: ['artificial intelligence', 'machine learning', 'ml'],
     job: ['career', 'role', 'position', 'interview'],
     study: ['learn', 'learning', 'review', 'practice'],
+    learn: ['study', 'review', 'practice', 'revise'],
+    review: ['study', 'learn', 'revise'],
+    revise: ['study', 'review', 'practice'],
+    practice: ['study', 'learn', 'review'],
+    build: ['develop', 'implement', 'create', 'ship'],
+    develop: ['build', 'implement', 'create'],
     research: ['analysis', 'study', 'investigation', 'exploration'],
+    investigate: ['research', 'analyze', 'evaluate'],
+    analyze: ['research', 'investigate', 'evaluate'],
     write: ['essay', 'paper', 'report', 'draft'],
     debug: ['fix', 'error', 'troubleshoot', 'issue'],
     code: ['coding', 'programming', 'developer', 'development', 'javascript', 'java']
@@ -391,7 +399,14 @@
     const lowerUrl = String(pageSignals.url || '').toLowerCase();
     const lowerDomain = String(pageSignals.domain || '').toLowerCase();
     const titleHeadingText = `${pageSignals.title || ''} ${pageSignals.headings || ''}`.toLowerCase();
-    if (/\/(shorts?|reels?|explore|discover|trending|feed|for-you|foryou)\b/.test(lowerUrl) || pageMeta.linksPer100Words >= 12) return 'feed';
+    if (
+      /\/(shorts?|reels?|explore|discover|trending|feed|for-you|foryou)\b/.test(lowerUrl)
+      || (
+        pageMeta.linksPer100Words >= 16
+        && pageMeta.concentrationTop2 <= 0.58
+        && (pageMeta.recommendationNodes >= 2 || pageMeta.competingBlocks >= 5)
+      )
+    ) return 'feed';
     if (/\/(search|results)\b/.test(lowerUrl) || /\bresults?\b/.test(titleHeadingText)) return 'search-results';
     if (/\/(docs?|reference|api|guide|tutorial|wiki)\b/.test(lowerUrl) || /(^|\.)docs\./.test(lowerDomain)) return 'documentation';
     if (/\/(watch|video)\b/.test(lowerUrl)) return 'video-watch';
@@ -429,6 +444,30 @@
     const top2 = contentBlocks.slice(0, 2).reduce((sum, len) => sum + len, 0);
     const concentrationTop2 = Number((top2 / totalBlockText).toFixed(3));
 
+    const suspiciousBlockText = dedupeBlocks(Array.from(document.querySelectorAll('section, aside, nav, div, [role="feed"], [role="list"], [class*="feed"], [class*="rail"], [class*="recommend"], [class*="related"]')))
+      .map((element) => {
+        const blockMeta = collectBlockSignals(element).blockMeta;
+        const markerText = [
+          element.className || '',
+          element.id || '',
+          element.getAttribute('role') || '',
+          element.getAttribute('aria-label') || ''
+        ].join(' ').toLowerCase();
+        const isSuspicious = (
+          blockMeta.linkDensity >= 0.45
+          || blockMeta.repeatedChildren >= 5
+          || (blockMeta.linkCount + blockMeta.buttonCount) >= 14
+          || RECOMMENDATION_MARKERS.some((marker) => markerText.includes(marker))
+        );
+        if (!isSuspicious) {
+          return '';
+        }
+        return (element.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+      })
+      .filter(Boolean)
+      .slice(0, 4)
+      .join(' ');
+
     return {
       totalLinks,
       totalButtons,
@@ -436,7 +475,8 @@
       linksPer100Words,
       recommendationNodes,
       concentrationTop2,
-      competingBlocks: contentBlocks.filter((len) => len >= 300 && len <= 1800).length
+      competingBlocks: contentBlocks.filter((len) => len >= 300 && len <= 1800).length,
+      suspiciousBlockText
     };
   }
 
@@ -580,7 +620,8 @@
       ...Object.values(DISTRACTOR_GROUPS).flat(),
       ...(Array.isArray(intent.distractors) ? intent.distractors : [])
     ]);
-    const distractorText = `${titleText} ${headingText} ${domainText} ${urlText}`.trim();
+    const suspiciousBlockText = normalizeToken((pageSignals.pageMeta && pageSignals.pageMeta.suspiciousBlockText) || '').replace(/\s+/g, ' ').trim();
+    const distractorText = `${titleText} ${headingText} ${domainText} ${urlText} ${suspiciousBlockText}`.trim();
     const distractorHits = distractorSignals.reduce((total, signal) => total + (distractorText.includes(normalizeToken(signal)) ? 1 : 0), 0);
     if (distractorHits > 0 && keywordCoverageRatio < 0.25) {
       breakdown.distractorPenalty = -Math.min(12, distractorHits * 3);
@@ -612,7 +653,7 @@
     const intentTopicText = normalizeToken(intent.topic || '').replace(/\s+/g, ' ').trim();
     const intentKeywordText = `${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`.trim();
     const isSocialResearchIntent = intent.mode === 'research' && /(social media|instagram|tiktok|youtube|facebook|reddit|x|twitter)/.test(intentTopicText);
-    const isDebugIntent = /(debug|fix|error|bug|issue|stack trace|exception)/.test(intentKeywordText) || intent.mode === 'build';
+    const isDebugIntent = /(debug|fix|error|bug|issue|stack trace|exception|crash|traceback)/.test(intentKeywordText);
     const onDebugKnowledgeDomain = /(^|\.)stackoverflow\.com$/i.test(lowerDomain) || /(^|\.)reddit\.com$/i.test(lowerDomain);
 
     if (onDistractorDomain && keywordCoverageRatio < 0.5) {
@@ -663,8 +704,9 @@
     const pageDomainText = `${titleText} ${headingText} ${paragraphText} ${urlText}`;
     const topIntentDomain = inferDomainProfile(intentDomainText)[0];
     const topPageDomain = inferDomainProfile(pageDomainText)[0];
-    if (topIntentDomain && topPageDomain && topIntentDomain.domain !== topPageDomain.domain && keywordCoverageRatio < 0.35) {
-      breakdown.intentConflictAdjustment -= 4;
+    const highConflictDomains = new Set(['entertainment', 'shopping', 'gaming', 'social']);
+    if (topIntentDomain && topPageDomain && topIntentDomain.domain !== topPageDomain.domain && keywordCoverageRatio < 0.45) {
+      breakdown.intentConflictAdjustment -= highConflictDomains.has(topPageDomain.domain) ? 7 : 4;
     }
 
     const intentVectorTokens = tokenizeForVector(`${intent.normalizedText} ${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`);
@@ -675,10 +717,13 @@
     const similarity = cosineSimilarity(intentVector, pageVector);
     breakdown.semanticSimilarity = Math.round(similarity * 20);
 
+    const preMomentumScore = Object.values(breakdown).reduce((total, value) => total + value, 0);
+    const boundaryDistance = Math.abs(preMomentumScore - 10);
+    const momentumWeight = boundaryDistance <= 12 ? 1 : boundaryDistance <= 20 ? 0.6 : 0.35;
     if (pageSignals.focusMomentum > 0.7) {
-      breakdown.momentumAdjustment += 3;
+      breakdown.momentumAdjustment += Number((2.5 * momentumWeight).toFixed(2));
     } else if (pageSignals.focusMomentum < 0.3) {
-      breakdown.momentumAdjustment -= 3;
+      breakdown.momentumAdjustment -= Number((2.5 * momentumWeight).toFixed(2));
     }
 
     const blockMeta = pageSignals.blockMeta || {};
@@ -699,15 +744,29 @@
       breakdown.structureBonus += 2;
     }
 
+    const relevanceKeys = [
+      'titleMatches', 'headingMatches', 'keywordFrequency', 'paragraphDensity', 'phraseMatches',
+      'domainMatches', 'urlMatches', 'coverageBonus', 'intentCoverageBoost', 'qualityBonus',
+      'structureBonus', 'semanticSimilarity', 'contextualDomainAdjustment'
+    ];
+    const distractionKeys = [
+      'distractorPenalty', 'contextPenalty', 'distractionPressure', 'intentConflictAdjustment', 'pageTypeAdjustment'
+    ];
+    const relevanceScore = relevanceKeys.reduce((total, key) => total + Math.max(0, breakdown[key] || 0), 0);
+    const distractionPressure = distractionKeys.reduce((total, key) => total + Math.abs(Math.min(0, breakdown[key] || 0)), 0);
+    const score = relevanceScore - distractionPressure + (breakdown.momentumAdjustment || 0);
+
     return {
-      score: Object.values(breakdown).reduce((total, value) => total + value, 0),
+      score,
       breakdown,
       matches: summarizeMatches(intent, pageSignals),
       diagnostics: {
         keywordCoverageRatio,
         matchedKeywordCount,
         distractorHits,
-        semanticSimilarity: similarity
+        semanticSimilarity: similarity,
+        relevanceScore,
+        distractionPressure
       }
     };
   }
