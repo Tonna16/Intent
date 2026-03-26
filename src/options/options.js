@@ -9,10 +9,7 @@
     highlightRelevantParagraphs: document.getElementById('highlight-relevant-paragraphs'),
     autoSaveRelevantPages: document.getElementById('auto-save-relevant-pages'),
     showDriftBanner: document.getElementById('show-drift-banner'),
-    thresholdPreset: document.getElementById('threshold-preset'),
-    thresholdRelevant: document.getElementById('threshold-relevant'),
-    thresholdMaybe: document.getElementById('threshold-maybe'),
-    thresholdDistraction: document.getElementById('threshold-distraction')
+    thresholdPreset: document.getElementById('threshold-preset')
   };
   const presetSummary = document.getElementById('preset-summary');
 
@@ -22,8 +19,6 @@
         return 'Relaxed mode lowers score cutoffs so more pages qualify as useful.';
       case 'focused':
         return 'Focused mode raises score cutoffs to keep only the strongest matches.';
-      case 'custom':
-        return 'Custom mode is using your advanced manual threshold values.';
       case 'balanced':
       default:
         return 'Balanced mode applies moderate filtering for everyday browsing.';
@@ -36,14 +31,6 @@
     }
   }
 
-  function readThresholdFields() {
-    return {
-      relevant: fields.thresholdRelevant.value,
-      maybe: fields.thresholdMaybe.value,
-      distraction: fields.thresholdDistraction.value
-    };
-  }
-
   function collectSettingsFromForm() {
     return {
       hideYouTubeShorts: fields.hideYouTubeShorts.checked,
@@ -51,8 +38,7 @@
       highlightRelevantParagraphs: fields.highlightRelevantParagraphs.checked,
       autoSaveRelevantPages: fields.autoSaveRelevantPages.checked,
       showDriftBanner: fields.showDriftBanner.checked,
-      thresholdPreset: fields.thresholdPreset.value,
-      thresholds: readThresholdFields()
+      thresholdPreset: fields.thresholdPreset.value
     };
   }
 
@@ -71,10 +57,8 @@
     fields.highlightRelevantParagraphs.checked = settings.highlightRelevantParagraphs;
     fields.autoSaveRelevantPages.checked = settings.autoSaveRelevantPages;
     fields.showDriftBanner.checked = settings.showDriftBanner;
-    fields.thresholdPreset.value = settings.thresholdPreset || 'balanced';
-    fields.thresholdRelevant.value = String(settings.thresholds.relevant);
-    fields.thresholdMaybe.value = String(settings.thresholds.maybe);
-    fields.thresholdDistraction.value = String(settings.thresholds.distraction);
+    const preset = settings.thresholdPreset === 'custom' ? 'balanced' : (settings.thresholdPreset || 'balanced');
+    fields.thresholdPreset.value = preset;
     updatePresetSummary(fields.thresholdPreset.value);
   }
 
@@ -124,10 +108,6 @@
     const selectedPreset = fields.thresholdPreset.value;
     updatePresetSummary(selectedPreset);
 
-    if (selectedPreset === 'custom') {
-      return;
-    }
-
     setStatus('Applying preset…');
     try {
       const savedSettings = await globalScope.IntentStorage.setSettings({
@@ -138,24 +118,6 @@
     } catch (error) {
       setStatus('Unable to apply preset.');
     }
-  }
-
-  function handleThresholdInputChange() {
-    if (!globalScope.IntentStorage) {
-      return;
-    }
-
-    const thresholds = readThresholdFields();
-    const presets = globalScope.IntentStorage.THRESHOLD_PRESETS || {};
-    const matchedPreset = Object.keys(presets).find((key) => {
-      const bundle = presets[key];
-      return String(bundle.relevant) === String(thresholds.relevant)
-        && String(bundle.maybe) === String(thresholds.maybe)
-        && String(bundle.distraction) === String(thresholds.distraction);
-    });
-
-    fields.thresholdPreset.value = matchedPreset || 'custom';
-    updatePresetSummary(fields.thresholdPreset.value);
   }
 
   async function resetSettings() {
@@ -177,8 +139,5 @@
   form.addEventListener('submit', saveSettings);
   resetButton.addEventListener('click', resetSettings);
   fields.thresholdPreset.addEventListener('change', handlePresetChange);
-  fields.thresholdRelevant.addEventListener('input', handleThresholdInputChange);
-  fields.thresholdMaybe.addEventListener('input', handleThresholdInputChange);
-  fields.thresholdDistraction.addEventListener('input', handleThresholdInputChange);
   loadSettings();
 })(globalThis);
