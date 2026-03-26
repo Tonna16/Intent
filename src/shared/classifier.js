@@ -586,11 +586,16 @@
 
     const modeKeywordSet = new Set((intent.modeKeywords || []).map((keyword) => normalizeToken(keyword).replace(/\s+/g, ' ').trim()));
     const topicKeywordSet = new Set((intent.topicKeywords || []).map((keyword) => normalizeToken(keyword).replace(/\s+/g, ' ').trim()));
+    const topicKeywordVectorTokens = new Set((intent.topicKeywords || []).flatMap((keyword) => tokenizeForVector(keyword)));
+    const topicPhrases = (intent.phrases || []).filter((phrase) => tokenizeForVector(phrase).some((token) => topicKeywordVectorTokens.has(token)));
+    const topicPhraseSet = new Set(topicPhrases);
     let matchedKeywordCount = 0;
     let matchedTopicKeywordCount = 0;
     let matchedModeKeywordCount = 0;
     const matchedKeywords = new Set();
     const matchedTopicKeywords = new Set();
+    let topicMatchScore = 0;
+    let taskModeScore = 0;
 
     intent.keywords.forEach((keyword) => {
       const titleMatches = countOccurrences(titleText, keyword);
@@ -601,17 +606,29 @@
       const urlMatches = countOccurrences(urlText, keyword);
 
       const isModeKeyword = modeKeywordSet.has(keyword);
-      const titleWeight = isModeKeyword ? 2 : 6;
-      const headingWeight = isModeKeyword ? 1.5 : 4;
-      const bodyWeight = isModeKeyword ? 0.5 : 1;
-      const domainWeight = isModeKeyword ? 1 : 5;
-      const urlWeight = isModeKeyword ? 1 : 4;
+      const titleWeight = isModeKeyword ? 0.8 : 6;
+      const headingWeight = isModeKeyword ? 0.5 : 4;
+      const bodyWeight = isModeKeyword ? 0.25 : 1;
+      const domainWeight = isModeKeyword ? 0.4 : 5;
+      const urlWeight = isModeKeyword ? 0.4 : 4;
+      const titleContribution = titleMatches * titleWeight;
+      const headingContribution = headingMatches * headingWeight;
+      const bodyContribution = Math.min(bodyMatches * bodyWeight, isModeKeyword ? 2 : 12);
+      const domainContribution = domainMatches * domainWeight;
+      const urlContribution = urlMatches * urlWeight;
+      const totalKeywordContribution = titleContribution + headingContribution + bodyContribution + domainContribution + urlContribution;
 
-      breakdown.titleMatches += titleMatches * titleWeight;
-      breakdown.headingMatches += headingMatches * headingWeight;
-      breakdown.keywordFrequency += Math.min(bodyMatches * bodyWeight, isModeKeyword ? 4 : 12);
-      breakdown.domainMatches += domainMatches * domainWeight;
-      breakdown.urlMatches += urlMatches * urlWeight;
+      breakdown.titleMatches += titleContribution;
+      breakdown.headingMatches += headingContribution;
+      breakdown.keywordFrequency += bodyContribution;
+      breakdown.domainMatches += domainContribution;
+      breakdown.urlMatches += urlContribution;
+
+      if (topicKeywordSet.has(keyword)) {
+        topicMatchScore += totalKeywordContribution;
+      } else if (isModeKeyword) {
+        taskModeScore += totalKeywordContribution;
+      }
 
       if (paragraphMatches >= 2) {
         breakdown.paragraphDensity += 3;
@@ -646,8 +663,12 @@
       const bodyPhraseMatch = pageText.includes(phrase) ? 1 : 0;
       const domainPhraseMatch = domainText.includes(phrase) ? 1 : 0;
       const urlPhraseMatch = urlText.includes(phrase) ? 1 : 0;
+      const phraseContribution = (titlePhraseMatch * 8) + (headingPhraseMatch * 5) + (bodyPhraseMatch * 3) + (domainPhraseMatch * 4) + (urlPhraseMatch * 4);
 
-      breakdown.phraseMatches += (titlePhraseMatch * 8) + (headingPhraseMatch * 5) + (bodyPhraseMatch * 3) + (domainPhraseMatch * 4) + (urlPhraseMatch * 4);
+      breakdown.phraseMatches += phraseContribution;
+      if (topicPhraseSet.has(phrase)) {
+        topicMatchScore += phraseContribution;
+      }
     });
 
     const keywordCoverageRatio = intent.keywords.length ? (matchedKeywords.size / intent.keywords.length) : 0;
@@ -765,8 +786,9 @@
       breakdown.intentConflictAdjustment -= highConflictDomains.has(topPageDomain.domain) ? 7 : 4;
     }
 
-    const topicVectorSource = (intent.topicKeywords && intent.topicKeywords.length > 0)
-      ? `${intent.topic || ''} ${intent.topicKeywords.join(' ')} ${intent.phrases.join(' ')}`
+    const hasTopicTerms = Boolean((intent.topic || '').trim()) || (intent.topicKeywords && intent.topicKeywords.length > 0) || topicPhrases.length > 0;
+    const topicVectorSource = hasTopicTerms
+      ? `${intent.topic || ''} ${(intent.topicKeywords || []).join(' ')} ${topicPhrases.join(' ')}`
       : `${intent.normalizedText} ${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`;
     const intentVectorTokens = tokenizeForVector(topicVectorSource);
     const pageVectorTokens = tokenizeForVector(`${titleText} ${headingText} ${paragraphText} ${pageText}`);
@@ -804,16 +826,16 @@
     }
 
     const relevanceKeys = [
-      'titleMatches', 'headingMatches', 'keywordFrequency', 'paragraphDensity', 'phraseMatches',
-      'domainMatches', 'urlMatches', 'coverageBonus', 'intentCoverageBoost', 'qualityBonus',
-      'structureBonus', 'semanticSimilarity', 'contextualDomainAdjustment'
+      'paragraphDensity', 'coverageBonus', 'intentCoverageBoost', 'qualityBonus',
+      'structureBonus', 'semanticSimilarity', 'contextualDomainAdjustment', 'momentumAdjustment'
     ];
     const distractionKeys = [
       'distractorPenalty', 'contextPenalty', 'distractionPressure', 'intentConflictAdjustment', 'pageTypeAdjustment'
     ];
+    taskModeScore = Math.min(taskModeScore, 4);
     const relevanceScore = relevanceKeys.reduce((total, key) => total + Math.max(0, breakdown[key] || 0), 0);
     const distractionPressure = distractionKeys.reduce((total, key) => total + Math.abs(Math.min(0, breakdown[key] || 0)), 0);
-    const score = relevanceScore - distractionPressure + (breakdown.momentumAdjustment || 0);
+    const score = topicMatchScore + taskModeScore + relevanceScore - distractionPressure;
 
     return {
       score,
@@ -827,6 +849,8 @@
         matchedTopicKeywordCount,
         distractorHits,
         semanticSimilarity: similarity,
+        topicMatchScore,
+        taskModeScore,
         relevanceScore,
         distractionPressure
       }
@@ -1006,11 +1030,12 @@
 
     const diagnostics = scoring.diagnostics || {};
     const hasTopicConstraint = Array.isArray(normalizedIntent.topicKeywords) && normalizedIntent.topicKeywords.length > 0;
-    const hasStrongTopicMatch = !hasTopicConstraint || (diagnostics.matchedTopicKeywordCount || 0) > 0;
+    const missingRequiredTopicEvidence = hasTopicConstraint && (diagnostics.matchedTopicKeywordCount || 0) === 0;
     const explanation = [];
     if (normalizedIntent.keywords.length > 0) {
       explanation.push(`Matches ${diagnostics.matchedKeywordCount || 0}/${normalizedIntent.keywords.length} intent keywords`);
     }
+    explanation.push(`Topic evidence score ${(diagnostics.topicMatchScore || 0).toFixed(1)}, mode bonus ${(diagnostics.taskModeScore || 0).toFixed(1)}, relevance ${(diagnostics.relevanceScore || 0).toFixed(1)}, distraction pressure ${(diagnostics.distractionPressure || 0).toFixed(1)}`);
     explanation.push(`Semantic similarity ${(Math.max(0, diagnostics.semanticSimilarity || 0) * 100).toFixed(0)}%`);
     if ((diagnostics.distractorHits || 0) > 0) {
       explanation.push(`Distractor signals detected: ${diagnostics.distractorHits}`);
@@ -1021,7 +1046,7 @@
         ? 'Recent momentum indicates drift, so this page is scored more strictly'
         : 'Recent momentum is neutral');
 
-    const adjustedLabel = (label === 'relevant' && !hasStrongTopicMatch) ? 'maybe' : label;
+    const adjustedLabel = (label === 'relevant' && missingRequiredTopicEvidence) ? 'maybe' : label;
 
     return {
       intent: normalizedIntent,
