@@ -11,10 +11,29 @@
     highlightRelevantParagraphs: true,
     autoSaveRelevantPages: true,
     showDriftBanner: true,
+    thresholdPreset: 'balanced',
     thresholds: {
       relevant: 24,
       maybe: 10,
       distraction: 0
+    }
+  };
+
+  const THRESHOLD_PRESETS = {
+    relaxed: {
+      relevant: 20,
+      maybe: 8,
+      distraction: 0
+    },
+    balanced: {
+      relevant: 24,
+      maybe: 10,
+      distraction: 0
+    },
+    focused: {
+      relevant: 30,
+      maybe: 14,
+      distraction: 2
     }
   };
 
@@ -78,6 +97,30 @@
     return Math.max(0, Math.round(numericValue));
   }
 
+  function normalizePresetKey(value) {
+    return Object.prototype.hasOwnProperty.call(THRESHOLD_PRESETS, value) ? value : null;
+  }
+
+  function cloneThresholdPreset(presetKey) {
+    return { ...THRESHOLD_PRESETS[presetKey] };
+  }
+
+  function getPresetForThresholds(thresholds) {
+    const keys = Object.keys(THRESHOLD_PRESETS);
+    for (const key of keys) {
+      const preset = THRESHOLD_PRESETS[key];
+      if (
+        preset.relevant === thresholds.relevant
+        && preset.maybe === thresholds.maybe
+        && preset.distraction === thresholds.distraction
+      ) {
+        return key;
+      }
+    }
+
+    return 'custom';
+  }
+
   function normalizeSettings(rawSettings) {
     const mergedSettings = cloneDefaults();
     if (!rawSettings || typeof rawSettings !== 'object') {
@@ -90,14 +133,20 @@
       }
     });
 
+    const requestedPreset = normalizePresetKey(rawSettings.thresholdPreset);
+    if (requestedPreset) {
+      mergedSettings.thresholdPreset = requestedPreset;
+      mergedSettings.thresholds = cloneThresholdPreset(requestedPreset);
+    }
+
     const rawThresholds = rawSettings.thresholds && typeof rawSettings.thresholds === 'object'
       ? rawSettings.thresholds
       : {};
 
     mergedSettings.thresholds = {
-      relevant: normalizeThresholdValue(rawThresholds.relevant, DEFAULT_SETTINGS.thresholds.relevant),
-      maybe: normalizeThresholdValue(rawThresholds.maybe, DEFAULT_SETTINGS.thresholds.maybe),
-      distraction: normalizeThresholdValue(rawThresholds.distraction, DEFAULT_SETTINGS.thresholds.distraction)
+      relevant: normalizeThresholdValue(rawThresholds.relevant, mergedSettings.thresholds.relevant),
+      maybe: normalizeThresholdValue(rawThresholds.maybe, mergedSettings.thresholds.maybe),
+      distraction: normalizeThresholdValue(rawThresholds.distraction, mergedSettings.thresholds.distraction)
     };
 
     if (mergedSettings.thresholds.relevant < mergedSettings.thresholds.maybe) {
@@ -107,6 +156,8 @@
     if (mergedSettings.thresholds.maybe < mergedSettings.thresholds.distraction) {
       mergedSettings.thresholds.maybe = mergedSettings.thresholds.distraction;
     }
+
+    mergedSettings.thresholdPreset = getPresetForThresholds(mergedSettings.thresholds);
 
     return mergedSettings;
   }
@@ -376,12 +427,19 @@
 
   async function setSettings(partialSettings) {
     const existingSettings = await getSettings();
+    const partial = partialSettings || {};
+    const presetFromPartial = normalizePresetKey(partial.thresholdPreset);
+    const baseThresholds = presetFromPartial
+      ? cloneThresholdPreset(presetFromPartial)
+      : existingSettings.thresholds;
+
     const nextSettings = normalizeSettings({
       ...existingSettings,
-      ...(partialSettings || {}),
+      ...partial,
+      thresholdPreset: presetFromPartial || existingSettings.thresholdPreset,
       thresholds: {
-        ...existingSettings.thresholds,
-        ...((partialSettings && partialSettings.thresholds) || {})
+        ...baseThresholds,
+        ...((partial && partial.thresholds) || {})
       }
     });
 
@@ -407,6 +465,7 @@
     STORAGE_KEYS,
     STORAGE_KEY: STORAGE_KEYS.currentIntent,
     DEFAULT_SETTINGS: cloneDefaults(),
+    THRESHOLD_PRESETS,
     EMPTY_SESSION: cloneEmptySession(),
     hasChromeStorage,
     getCurrentIntent,

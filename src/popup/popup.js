@@ -7,6 +7,7 @@
   const noteInput = document.getElementById('session-note');
   const statusMessage = document.getElementById('status-message');
   const pageStatusPill = document.getElementById('page-status-pill');
+  const strictnessPill = document.getElementById('strictness-pill');
   const pageSummary = document.getElementById('page-summary');
   const pageScore = document.getElementById('page-score');
   const pageReasons = document.getElementById('page-reasons');
@@ -52,6 +53,34 @@
       case 'maybe': return 'Partial match';
       default: return 'No page scored';
     }
+  }
+
+  function formatPreset(presetKey) {
+    switch (presetKey) {
+      case 'relaxed':
+        return 'Relaxed mode';
+      case 'focused':
+        return 'Focused mode';
+      case 'custom':
+        return 'Custom mode';
+      case 'balanced':
+      default:
+        return 'Balanced mode';
+    }
+  }
+
+  function renderStrictness(settings) {
+    if (!strictnessPill) {
+      return;
+    }
+
+    const preset = settings && settings.thresholdPreset ? settings.thresholdPreset : 'balanced';
+    strictnessPill.textContent = formatPreset(preset);
+    strictnessPill.dataset.tone = preset === 'focused'
+      ? 'distraction'
+      : preset === 'relaxed'
+        ? 'relevant'
+        : 'idle';
   }
 
   function renderIntent(intentText, session) {
@@ -190,6 +219,7 @@ const confidenceSuffix = typeof classification.confidence === 'number' ? ` • c
       renderUsefulPages(state.session);
       renderNotes(state.session);
       renderDrift(state.session);
+      renderStrictness(state.settings);
     } catch (error) {
       statusMessage.textContent = 'Unable to load saved intent.';
     }

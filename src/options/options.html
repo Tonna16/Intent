@@ -138,7 +138,8 @@
         font-weight: 600;
       }
 
-      .field input {
+      .field input,
+      .field select {
         width: 100%;
         padding: 12px 14px;
         border: 1px solid var(--panel-border);
@@ -149,9 +150,23 @@
       }
 
       @media (prefers-color-scheme: dark) {
-        .field input {
+        .field input,
+        .field select {
           background: rgba(15, 23, 42, 0.9);
         }
+      }
+
+      .advanced-thresholds {
+        margin-top: 14px;
+      }
+
+      .advanced-thresholds summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      .advanced-thresholds .threshold-grid {
+        margin-top: 14px;
       }
 
       .actions {
@@ -260,24 +275,35 @@
 
         <section class="section">
           <h2>Sensitivity thresholds</h2>
-          <p>These score cutoffs control how strongly the classifier categorizes a page.</p>
-          <div class="threshold-grid">
-            <div class="field">
-              <label for="threshold-relevant">Relevant threshold</label>
-              <input id="threshold-relevant" name="thresholdRelevant" type="number" min="0" step="1" inputmode="numeric" />
-            </div>
-            <div class="field">
-              <label for="threshold-maybe">Maybe threshold</label>
-              <input id="threshold-maybe" name="thresholdMaybe" type="number" min="0" step="1" inputmode="numeric" />
-            </div>
-            <div class="field">
-              <label for="threshold-distraction">Distraction floor</label>
-              <input id="threshold-distraction" name="thresholdDistraction" type="number" min="0" step="1" inputmode="numeric" />
-            </div>
+          <p>Choose a strictness preset, then optionally fine tune exact score cutoffs in advanced mode.</p>
+          <div class="field">
+            <label for="threshold-preset">Strictness preset</label>
+            <select id="threshold-preset" name="thresholdPreset">
+              <option value="relaxed">Relaxed</option>
+              <option value="balanced">Balanced</option>
+              <option value="focused">Focused</option>
+              <option value="custom">Custom (advanced)</option>
+            </select>
           </div>
-          <p class="threshold-help">
-            The extension will normalize invalid combinations so <strong>relevant ≥ maybe ≥ distraction</strong>.
-          </p>
+          <details class="advanced-thresholds">
+            <summary>Advanced thresholds</summary>
+            <div class="threshold-grid">
+              <div class="field">
+                <label for="threshold-relevant">Relevant threshold</label>
+                <input id="threshold-relevant" name="thresholdRelevant" type="number" min="0" step="1" inputmode="numeric" />
+              </div>
+              <div class="field">
+                <label for="threshold-maybe">Maybe threshold</label>
+                <input id="threshold-maybe" name="thresholdMaybe" type="number" min="0" step="1" inputmode="numeric" />
+              </div>
+              <div class="field">
+                <label for="threshold-distraction">Distraction floor</label>
+                <input id="threshold-distraction" name="thresholdDistraction" type="number" min="0" step="1" inputmode="numeric" />
+              </div>
+            </div>
+          </details>
+          <p class="threshold-help" id="preset-summary">Balanced profile applies moderate filtering for everyday browsing.</p>
+          <p class="threshold-help">Presets map to internal thresholds. Invalid combinations are normalized so <strong>relevant ≥ maybe ≥ distraction</strong>.</p>
         </section>
 
         <section class="section">
