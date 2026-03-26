@@ -13,6 +13,13 @@
     apply: ['apply', 'application', 'internship', 'job', 'resume', 'cover letter']
   };
 
+  const GENERIC_MODE_WORDS = new Set([
+    'learn', 'learning', 'study', 'review', 'practice', 'revise', 'memorize',
+    'research', 'investigate', 'analyze', 'analyse', 'compare', 'explore', 'read',
+    'write', 'draft', 'outline', 'edit', 'build', 'develop', 'implement', 'create',
+    'code', 'debug', 'apply', 'application'
+  ]);
+
   const DISTRACTOR_HINTS = {
     default: ['youtube shorts', 'social media', 'entertainment', 'shopping'],
     study: ['youtube shorts', 'social media', 'gaming', 'streaming'],
@@ -271,10 +278,21 @@
       return '';
     }
 
+    const modeTerms = MODE_KEYWORDS[mode] || [];
+    const actionPrefix = unique([...modeTerms, ...Array.from(GENERIC_MODE_WORDS)])
+      .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .sort((left, right) => right.length - left.length)
+      .join('|');
+
     const stripped = rawText
       .replace(/^i am\s+/i, '')
       .replace(/^i'm\s+/i, '')
       .replace(/^my goal is to\s+/i, '')
+      .replace(/^i want to\s+/i, '')
+      .replace(/^i need to\s+/i, '')
+      .replace(/^i should\s+/i, '')
+      .replace(/^please\s+/i, '')
+      .replace(actionPrefix ? new RegExp(`^(?:${actionPrefix})\\s+`, 'i') : /^$/, '')
       .replace(new RegExp(`^${mode}\s+`, 'i'), '')
       .trim();
 
@@ -297,7 +315,10 @@
 
     const mode = detectMode(normalizedText);
     const rawTokens = normalizedText.split(' ');
-    const keywords = expandKeywordSet(rawTokens.filter((token) => token.length > 2 && !STOP_WORDS.has(token)));
+    const meaningfulTokens = rawTokens.filter((token) => token.length > 2 && !STOP_WORDS.has(token));
+    const keywords = expandKeywordSet(meaningfulTokens);
+    const modeKeywords = unique(keywords.filter((token) => GENERIC_MODE_WORDS.has(canonicalizeToken(token))));
+    const topicKeywords = unique(keywords.filter((token) => !GENERIC_MODE_WORDS.has(canonicalizeToken(token))));
     const phrases = [];
 
     for (let index = 0; index < rawTokens.length - 1; index += 1) {
@@ -319,6 +340,8 @@
       mode,
       topic: extractTopic(intentText, mode),
       keywords,
+      modeKeywords,
+      topicKeywords,
       phrases: unique(phrases),
       distractors: DISTRACTOR_HINTS[mode] || DISTRACTOR_HINTS.default,
       suggestedTools: TOOL_SUGGESTIONS[mode] || TOOL_SUGGESTIONS.research
@@ -561,8 +584,13 @@
       pageTypeAdjustment: 0
     };
 
+    const modeKeywordSet = new Set((intent.modeKeywords || []).map((keyword) => normalizeToken(keyword).replace(/\s+/g, ' ').trim()));
+    const topicKeywordSet = new Set((intent.topicKeywords || []).map((keyword) => normalizeToken(keyword).replace(/\s+/g, ' ').trim()));
     let matchedKeywordCount = 0;
+    let matchedTopicKeywordCount = 0;
+    let matchedModeKeywordCount = 0;
     const matchedKeywords = new Set();
+    const matchedTopicKeywords = new Set();
 
     intent.keywords.forEach((keyword) => {
       const titleMatches = countOccurrences(titleText, keyword);
@@ -572,11 +600,18 @@
       const domainMatches = countOccurrences(domainText, keyword);
       const urlMatches = countOccurrences(urlText, keyword);
 
-      breakdown.titleMatches += titleMatches * 6;
-      breakdown.headingMatches += headingMatches * 4;
-      breakdown.keywordFrequency += Math.min(bodyMatches, 12);
-      breakdown.domainMatches += domainMatches * 5;
-      breakdown.urlMatches += urlMatches * 4;
+      const isModeKeyword = modeKeywordSet.has(keyword);
+      const titleWeight = isModeKeyword ? 2 : 6;
+      const headingWeight = isModeKeyword ? 1.5 : 4;
+      const bodyWeight = isModeKeyword ? 0.5 : 1;
+      const domainWeight = isModeKeyword ? 1 : 5;
+      const urlWeight = isModeKeyword ? 1 : 4;
+
+      breakdown.titleMatches += titleMatches * titleWeight;
+      breakdown.headingMatches += headingMatches * headingWeight;
+      breakdown.keywordFrequency += Math.min(bodyMatches * bodyWeight, isModeKeyword ? 4 : 12);
+      breakdown.domainMatches += domainMatches * domainWeight;
+      breakdown.urlMatches += urlMatches * urlWeight;
 
       if (paragraphMatches >= 2) {
         breakdown.paragraphDensity += 3;
@@ -587,6 +622,13 @@
       if (titleMatches > 0 || headingMatches > 0 || bodyMatches > 0 || paragraphMatches > 0 || domainMatches > 0 || urlMatches > 0) {
         matchedKeywordCount += 1;
         matchedKeywords.add(keyword);
+        if (topicKeywordSet.has(keyword)) {
+          matchedTopicKeywordCount += 1;
+          matchedTopicKeywords.add(keyword);
+        }
+        if (modeKeywordSet.has(keyword)) {
+          matchedModeKeywordCount += 1;
+        }
       }
     });
 
@@ -609,10 +651,24 @@
     });
 
     const keywordCoverageRatio = intent.keywords.length ? (matchedKeywords.size / intent.keywords.length) : 0;
-    if (keywordCoverageRatio >= 0.7) {
+    const topicCoverageRatio = intent.topicKeywords && intent.topicKeywords.length
+      ? (matchedTopicKeywords.size / intent.topicKeywords.length)
+      : 0;
+    const modeCoverageRatio = intent.modeKeywords && intent.modeKeywords.length
+      ? (matchedModeKeywordCount / intent.modeKeywords.length)
+      : 0;
+    if (topicCoverageRatio >= 0.7) {
       breakdown.intentCoverageBoost = 12;
-    } else if (keywordCoverageRatio >= 0.4) {
+    } else if (topicCoverageRatio >= 0.4) {
       breakdown.intentCoverageBoost = 6;
+    } else if (modeCoverageRatio >= 0.7) {
+      breakdown.intentCoverageBoost = 2;
+    }
+
+    if ((intent.topicKeywords || []).length > 0 && matchedTopicKeywords.size === 0) {
+      breakdown.intentConflictAdjustment -= 12;
+    } else if ((intent.topicKeywords || []).length > 0 && topicCoverageRatio < 0.2 && modeCoverageRatio > 0.5) {
+      breakdown.intentConflictAdjustment -= 6;
     }
 
     const distractorSignals = unique([
@@ -679,16 +735,16 @@
     }
 
     const pageType = pageSignals.pageType || 'general';
-    if (['feed', 'home-discovery', 'search-results'].includes(pageType) && keywordCoverageRatio < 0.5) {
+    if (['feed', 'home-discovery', 'search-results'].includes(pageType) && topicCoverageRatio < 0.5) {
       breakdown.pageTypeAdjustment -= 4;
-    } else if (['article', 'documentation'].includes(pageType) && keywordCoverageRatio > 0.2) {
+    } else if (['article', 'documentation'].includes(pageType) && topicCoverageRatio > 0.2) {
       breakdown.pageTypeAdjustment += 3;
     }
 
-    if (onKnowledgeDomain && keywordCoverageRatio > 0.15) {
+    if (onKnowledgeDomain && topicCoverageRatio > 0.15) {
       breakdown.qualityBonus += 4;
     }
-    if (urlHasDeepContentSignals && keywordCoverageRatio > 0.1) {
+    if (urlHasDeepContentSignals && topicCoverageRatio > 0.1) {
       breakdown.qualityBonus += 3;
     }
 
@@ -705,11 +761,14 @@
     const topIntentDomain = inferDomainProfile(intentDomainText)[0];
     const topPageDomain = inferDomainProfile(pageDomainText)[0];
     const highConflictDomains = new Set(['entertainment', 'shopping', 'gaming', 'social']);
-    if (topIntentDomain && topPageDomain && topIntentDomain.domain !== topPageDomain.domain && keywordCoverageRatio < 0.45) {
+    if (topIntentDomain && topPageDomain && topIntentDomain.domain !== topPageDomain.domain && topicCoverageRatio < 0.45) {
       breakdown.intentConflictAdjustment -= highConflictDomains.has(topPageDomain.domain) ? 7 : 4;
     }
 
-    const intentVectorTokens = tokenizeForVector(`${intent.normalizedText} ${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`);
+    const topicVectorSource = (intent.topicKeywords && intent.topicKeywords.length > 0)
+      ? `${intent.topic || ''} ${intent.topicKeywords.join(' ')} ${intent.phrases.join(' ')}`
+      : `${intent.normalizedText} ${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`;
+    const intentVectorTokens = tokenizeForVector(topicVectorSource);
     const pageVectorTokens = tokenizeForVector(`${titleText} ${headingText} ${paragraphText} ${pageText}`);
     const documentFrequency = computeDocumentFrequency([intentVectorTokens, pageVectorTokens]);
     const intentVector = buildTfIdfVector(intentVectorTokens, documentFrequency, 2);
@@ -762,7 +821,10 @@
       matches: summarizeMatches(intent, pageSignals),
       diagnostics: {
         keywordCoverageRatio,
+        topicCoverageRatio,
+        modeCoverageRatio,
         matchedKeywordCount,
+        matchedTopicKeywordCount,
         distractorHits,
         semanticSimilarity: similarity,
         relevanceScore,
@@ -943,6 +1005,8 @@
       : 0;
 
     const diagnostics = scoring.diagnostics || {};
+    const hasTopicConstraint = Array.isArray(normalizedIntent.topicKeywords) && normalizedIntent.topicKeywords.length > 0;
+    const hasStrongTopicMatch = !hasTopicConstraint || (diagnostics.matchedTopicKeywordCount || 0) > 0;
     const explanation = [];
     if (normalizedIntent.keywords.length > 0) {
       explanation.push(`Matches ${diagnostics.matchedKeywordCount || 0}/${normalizedIntent.keywords.length} intent keywords`);
@@ -957,6 +1021,8 @@
         ? 'Recent momentum indicates drift, so this page is scored more strictly'
         : 'Recent momentum is neutral');
 
+    const adjustedLabel = (label === 'relevant' && !hasStrongTopicMatch) ? 'maybe' : label;
+
     return {
       intent: normalizedIntent,
       pageSignals,
@@ -968,16 +1034,16 @@
       strongestDistractingBlock: selected.strongestDistracting,
       highlightBlocks: selected.highlightBlocks,
       blurBlocks: selected.blurBlocks,
-      label,
+      label: adjustedLabel,
       confidence,
-      isUseful: label === 'relevant',
-      summary: label === 'relevant'
- ? `This page strongly matches your intent for ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`        : label === 'maybe'
+      isUseful: adjustedLabel === 'relevant',
+      summary: adjustedLabel === 'relevant'
+ ? `This page strongly matches your intent for ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`        : adjustedLabel === 'maybe'
  ? `This page has some useful overlap with ${normalizedIntent.topic || 'the current task'}, but it is not a perfect fit (confidence ${confidence}%).`
           : `This page appears to pull you away from ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`,
-      recommendedAction: label === 'relevant'
+      recommendedAction: adjustedLabel === 'relevant'
         ? 'Save this page, extract notes, or keep exploring nearby sources.'
-        : label === 'maybe'
+        : adjustedLabel === 'maybe'
           ? 'Skim quickly and decide whether to save it for later.'
           : 'Consider closing this tab or returning to a saved relevant page.'
     };
