@@ -403,7 +403,19 @@
         clearBehavior();
         return;
       }
-      const classification = globalScope.IntentClassifier.classifyDocument(state.currentIntent, state.settings);
+      const recentVisits = state.session && Array.isArray(state.session.visits)
+        ? state.session.visits.slice(0, 5)
+        : [];
+      const focusMomentum = recentVisits.length
+        ? recentVisits.reduce((total, visit) => {
+          if (visit.label === 'relevant') return total + 1;
+          if (visit.label === 'maybe') return total + 0.5;
+          return total;
+        }, 0) / recentVisits.length
+        : 0.5;
+      const classification = globalScope.IntentClassifier.classifyDocument(state.currentIntent, state.settings, {
+        focusMomentum
+      });
       applyBehavior(classification, state.settings, hasActiveIntent);
       await syncVisit(classification, state.settings);
     } catch (error) {

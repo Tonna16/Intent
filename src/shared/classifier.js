@@ -73,12 +73,15 @@
   const KEYWORD_SYNONYMS = {
     computer: ['computers', 'computing', 'software', 'hardware'],
     computers: ['computer', 'computing', 'software', 'hardware'],
-    code: ['coding', 'programming', 'developer', 'development'],
     coding: ['code', 'programming', 'developer', 'development'],
     math: ['mathematics', 'algebra', 'calculus', 'statistics'],
     ai: ['artificial intelligence', 'machine learning', 'ml'],
     job: ['career', 'role', 'position', 'interview'],
-    study: ['learn', 'learning', 'review', 'practice']
+    study: ['learn', 'learning', 'review', 'practice'],
+    research: ['analysis', 'study', 'investigation', 'exploration'],
+    write: ['essay', 'paper', 'report', 'draft'],
+    debug: ['fix', 'error', 'troubleshoot', 'issue'],
+    code: ['coding', 'programming', 'developer', 'development', 'javascript', 'java']
   };
 
   const BLOCK_SELECTOR = [
@@ -148,6 +151,76 @@
     });
 
     return unique(expanded);
+  }
+
+  function tokenizeForVector(text) {
+    const normalized = normalizeToken(text || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      return [];
+    }
+
+    return normalized
+      .split(' ')
+      .map((token) => canonicalizeToken(token))
+      .filter((token) => token && token.length > 2 && !STOP_WORDS.has(token));
+  }
+
+  function buildTermFrequency(tokens) {
+    const tf = {};
+    const tokenCount = tokens.length || 1;
+    tokens.forEach((token) => {
+      tf[token] = (tf[token] || 0) + 1;
+    });
+    Object.keys(tf).forEach((token) => {
+      tf[token] = tf[token] / tokenCount;
+    });
+    return tf;
+  }
+
+  function computeDocumentFrequency(documents) {
+    const df = {};
+    documents.forEach((tokens) => {
+      const seen = new Set(tokens);
+      seen.forEach((token) => {
+        df[token] = (df[token] || 0) + 1;
+      });
+    });
+    return df;
+  }
+
+  function buildTfIdfVector(tokens, documentFrequency, documentCount) {
+    const tf = buildTermFrequency(tokens);
+    const vector = {};
+    Object.keys(tf).forEach((token) => {
+      const df = documentFrequency[token] || 0;
+      const idf = Math.log((documentCount + 1) / (df + 1)) + 1;
+      vector[token] = tf[token] * idf;
+    });
+    return vector;
+  }
+
+  function cosineSimilarity(vecA, vecB) {
+    let dot = 0;
+    let magA = 0;
+    let magB = 0;
+
+    Object.keys(vecA).forEach((key) => {
+      const a = vecA[key];
+      const b = vecB[key] || 0;
+      dot += a * b;
+      magA += a * a;
+    });
+
+    Object.keys(vecB).forEach((key) => {
+      const b = vecB[key];
+      magB += b * b;
+    });
+
+    if (magA === 0 || magB === 0) {
+      return 0;
+    }
+
+    return dot / (Math.sqrt(magA) * Math.sqrt(magB));
   }
 
   function detectMode(normalizedText) {
@@ -350,7 +423,10 @@
       distractorPenalty: 0,
       contextPenalty: 0,
       qualityBonus: 0,
-      structureBonus: 0
+      structureBonus: 0,
+      semanticSimilarity: 0,
+      contextualDomainAdjustment: 0,
+      momentumAdjustment: 0
     };
 
     let matchedKeywordCount = 0;
@@ -440,8 +516,18 @@
     const urlHasFeedSignals = /\/(shorts?|reels?|explore|feed|for-you|foryou|trending|discover)\b/.test(lowerUrl);
     const urlHasDeepContentSignals = /\/(docs?|article|research|paper|guide|tutorial|reference|wiki)\b/.test(lowerUrl);
 
+    const intentTopicText = normalizeToken(intent.topic || '').replace(/\s+/g, ' ').trim();
+    const intentKeywordText = `${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`.trim();
+    const isSocialResearchIntent = intent.mode === 'research' && /(social media|instagram|tiktok|youtube|facebook|reddit|x|twitter)/.test(intentTopicText);
+    const isDebugIntent = /(debug|fix|error|bug|issue|stack trace|exception)/.test(intentKeywordText) || intent.mode === 'build';
+    const onDebugKnowledgeDomain = /(^|\.)stackoverflow\.com$/i.test(lowerDomain) || /(^|\.)reddit\.com$/i.test(lowerDomain);
+
     if (onDistractorDomain && keywordCoverageRatio < 0.5) {
-      breakdown.contextPenalty -= 6;
+      const penalty = isSocialResearchIntent ? -2 : -6;
+      breakdown.contextPenalty += penalty;
+      if (isSocialResearchIntent) {
+        breakdown.contextualDomainAdjustment += 4;
+      }
     }
     if (urlHasFeedSignals && keywordCoverageRatio < 0.5) {
       breakdown.contextPenalty -= 5;
@@ -458,10 +544,47 @@
       breakdown.qualityBonus += 2;
     }
 
+    if (isDebugIntent && onDebugKnowledgeDomain) {
+      breakdown.contextualDomainAdjustment += 5;
+    }
+
+    const intentVectorTokens = tokenizeForVector(`${intent.normalizedText} ${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`);
+    const pageVectorTokens = tokenizeForVector(`${titleText} ${headingText} ${paragraphText} ${pageText}`);
+    const documentFrequency = computeDocumentFrequency([intentVectorTokens, pageVectorTokens]);
+    const intentVector = buildTfIdfVector(intentVectorTokens, documentFrequency, 2);
+    const pageVector = buildTfIdfVector(pageVectorTokens, documentFrequency, 2);
+    const similarity = cosineSimilarity(intentVector, pageVector);
+    breakdown.semanticSimilarity = Math.round(similarity * 20);
+
+    if (pageSignals.focusMomentum > 0.7) {
+      breakdown.momentumAdjustment += 3;
+    } else if (pageSignals.focusMomentum < 0.3) {
+      breakdown.momentumAdjustment -= 3;
+    }
+
+    const blockMeta = pageSignals.blockMeta || {};
+    if (blockMeta.isMainLike || blockMeta.inArticle) {
+      breakdown.structureBonus += 2;
+    }
+    if (blockMeta.inNavLike || blockMeta.inAsideLike) {
+      breakdown.structureBonus -= 3;
+    }
+    if (blockMeta.linkDensity > 0.5 && blockMeta.paragraphCount <= 2) {
+      breakdown.structureBonus -= 2;
+    } else if (blockMeta.paragraphCount >= 3 && blockMeta.averageParagraphLength >= 120) {
+      breakdown.structureBonus += 2;
+    }
+
     return {
       score: Object.values(breakdown).reduce((total, value) => total + value, 0),
       breakdown,
-      matches: summarizeMatches(intent, pageSignals)
+      matches: summarizeMatches(intent, pageSignals),
+      diagnostics: {
+        keywordCoverageRatio,
+        matchedKeywordCount,
+        distractorHits,
+        semanticSimilarity: similarity
+      }
     };
   }
 
@@ -489,12 +612,27 @@
 
   function collectBlockSignals(element) {
     const pageText = getVisibleTextNodes(element).map((node) => node.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ').trim();
+    const paragraphs = element.tagName.toLowerCase() === 'p' ? (element.innerText || '').replace(/\s+/g, ' ').trim() : getParagraphText(element);
+    const paragraphList = (paragraphs || '').split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    const linkCount = element.querySelectorAll('a').length;
+    const blockTextLength = pageText.length || 1;
     return {
       title: '',
       headings: getHeadingText(element),
-      paragraphs: element.tagName.toLowerCase() === 'p' ? (element.innerText || '').replace(/\s+/g, ' ').trim() : getParagraphText(element),
+      paragraphs,
       pageText,
-      domain: window.location.hostname
+      domain: window.location.hostname,
+      blockMeta: {
+        isMainLike: element.tagName === 'MAIN' || element.getAttribute('role') === 'main',
+        inArticle: Boolean(element.closest('article, [role="article"]')),
+        inNavLike: Boolean(element.closest('nav, [role="navigation"]')),
+        inAsideLike: Boolean(element.closest('aside, [role="complementary"]')),
+        paragraphCount: paragraphList.length,
+        averageParagraphLength: paragraphList.length
+          ? Math.round(paragraphList.reduce((sum, line) => sum + line.length, 0) / paragraphList.length)
+          : 0,
+        linkDensity: Math.min(1, linkCount / Math.max(1, blockTextLength / 120))
+      }
     };
   }
 
@@ -586,7 +724,7 @@
     };
   }
 
-  function classifyDocument(intentText, settings) {
+  function classifyDocument(intentText, settings, context) {
     const normalizedIntent = normalizeIntentText(intentText);
     const thresholds = settings && settings.thresholds ? settings.thresholds : { relevant: 24, maybe: 10, distraction: 0 };
     const pageSignals = {
@@ -595,7 +733,8 @@
       paragraphs: getParagraphText(),
       pageText: extractVisiblePageText(),
       domain: window.location.hostname,
-      url: window.location.href
+      url: window.location.href,
+      focusMomentum: context && typeof context.focusMomentum === 'number' ? context.focusMomentum : 0.5
     };
     const scoring = scorePage(normalizedIntent, pageSignals);
     const blocks = extractScoredBlocks(normalizedIntent, thresholds);
@@ -610,12 +749,27 @@
       ? Math.round(Math.min(100, Math.max(18, (Math.abs(scoring.score) / overallSignal) * 100)))
       : 0;
 
+    const diagnostics = scoring.diagnostics || {};
+    const explanation = [];
+    if (normalizedIntent.keywords.length > 0) {
+      explanation.push(`Matches ${diagnostics.matchedKeywordCount || 0}/${normalizedIntent.keywords.length} intent keywords`);
+    }
+    explanation.push(`Semantic similarity ${(Math.max(0, diagnostics.semanticSimilarity || 0) * 100).toFixed(0)}%`);
+    if ((diagnostics.distractorHits || 0) > 0) {
+      explanation.push(`Distractor signals detected: ${diagnostics.distractorHits}`);
+    }
+    explanation.push(pageSignals.focusMomentum > 0.7
+      ? 'Recent momentum is focused, so borderline pages get a small boost'
+      : pageSignals.focusMomentum < 0.3
+        ? 'Recent momentum indicates drift, so this page is scored more strictly'
+        : 'Recent momentum is neutral');
+
     return {
       intent: normalizedIntent,
       pageSignals,
       score: scoring.score,
       breakdown: scoring.breakdown,
-      matches: scoring.matches,
+      matches: unique([...(scoring.matches || []), ...explanation]),
       blocks,
       strongestRelevantBlock: selected.strongestRelevant,
       strongestDistractingBlock: selected.strongestDistracting,
