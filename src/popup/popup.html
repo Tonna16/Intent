@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="icon" href="../assets/icons/logo.svg" type="image/svg+xml">
+    <title>Intent Mode Browser</title>
+    <style>
+      :root {
+        --bg: #08111f;
+        --bg-soft: #0f172a;
+        --panel: rgba(15, 23, 42, 0.86);
+        --panel-strong: rgba(15, 23, 42, 0.96);
+        --border: rgba(148, 163, 184, 0.18);
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #60a5fa;
+        --accent-strong: #2563eb;
+        --success: #22c55e;
+        --warning: #f59e0b;
+        --danger: #f87171;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        width: 420px;
+        min-height: 640px;
+        padding: 18px;
+        font-family: Inter, Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(96, 165, 250, 0.24), transparent 34%),
+          radial-gradient(circle at top right, rgba(34, 197, 94, 0.14), transparent 28%),
+          linear-gradient(180deg, #08111f, #111827 56%, #020617);
+      }
+      h1,h2,h3,p { margin: 0; }
+      button, input, textarea { font: inherit; }
+      .stack { display: grid; gap: 14px; }
+      .window-close {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 20;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border-radius: 999px;
+        font-size: 18px;
+        line-height: 1;
+      }
+      .card {
+        padding: 16px;
+        border-radius: 20px;
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.82));
+        border: 1px solid var(--border);
+        box-shadow: 0 20px 50px rgba(2, 6, 23, 0.34);
+        backdrop-filter: blur(18px);
+      }
+      .hero {
+        position: relative;
+        overflow: hidden;
+      }
+      .hero::after {
+        content: '';
+        position: absolute;
+        inset: -30% auto auto 60%;
+        width: 140px;
+        height: 140px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(96, 165, 250, 0.22), transparent 70%);
+        pointer-events: none;
+      }
+      .eyebrow {
+        display: inline-flex;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(96, 165, 250, 0.14);
+        color: #bfdbfe;
+        font-size: 11px;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+      h1 { font-size: 24px; margin-bottom: 8px; }
+      .hero-copy, .metric, .status, .tiny, .empty {
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .hero-copy { font-size: 13px; max-width: 32ch; }
+      .input-shell {
+        margin-top: 14px;
+        padding: 12px;
+        border-radius: 16px;
+        background: rgba(2, 6, 23, 0.38);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+      }
+      textarea, input {
+        width: 100%;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(15, 23, 42, 0.92);
+        color: var(--text);
+        border-radius: 14px;
+        padding: 12px 14px;
+      }
+      textarea { min-height: 92px; resize: vertical; }
+      .button-row, .button-row-compact {
+        display: grid;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .button-row { grid-template-columns: 1.3fr 1fr; }
+      .button-row-compact { grid-template-columns: repeat(2, 1fr); }
+      button {
+        border: 0;
+        border-radius: 14px;
+        padding: 12px 14px;
+        cursor: pointer;
+        font-weight: 700;
+        color: white;
+        background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 10px 24px rgba(37, 99, 235, 0.28);
+      }
+      button.secondary {
+        color: var(--text);
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        box-shadow: none;
+      }
+      .status { min-height: 18px; margin-top: 10px; font-size: 12px; }
+      .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .stat {
+        padding: 12px;
+        border-radius: 16px;
+        background: rgba(30, 41, 59, 0.58);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+      }
+      .stat strong { display: block; font-size: 20px; margin-bottom: 4px; }
+      .stat span { color: var(--muted); font-size: 12px; }
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      h2 { font-size: 15px; }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 11px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .pill[data-tone="relevant"] { color: #bbf7d0; background: rgba(34, 197, 94, 0.14); }
+      .pill[data-tone="maybe"] { color: #fde68a; background: rgba(245, 158, 11, 0.15); }
+      .pill[data-tone="distraction"] { color: #fecaca; background: rgba(239, 68, 68, 0.15); }
+      .pill[data-tone="idle"] { color: #cbd5e1; background: rgba(148, 163, 184, 0.14); }
+      .parser-grid { display: grid; gap: 10px; }
+      .parser-item {
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(2, 6, 23, 0.32);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+      }
+      .parser-item .label {
+        font-size: 11px;
+        color: #bfdbfe;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        margin-bottom: 6px;
+      }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .chip {
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(59, 130, 246, 0.12);
+        color: #dbeafe;
+        font-size: 12px;
+      }
+      .timeline { display: grid; gap: 10px; }
+      .timeline-item {
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(2, 6, 23, 0.32);
+        border: 1px solid rgba(148, 163, 184, 0.08);
+      }
+      .timeline-item a {
+        color: #bfdbfe;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .meta-line { margin-top: 4px; font-size: 12px; color: var(--muted); }
+      .note-list { display: grid; gap: 8px; }
+      .note-item {
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(30, 41, 59, 0.5);
+        color: #dbeafe;
+        font-size: 12px;
+      }
+      .empty { font-size: 12px; }
+      .focus-bar {
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.12);
+        overflow: hidden;
+        margin-top: 10px;
+      }
+      .focus-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #f59e0b, #22c55e);
+      }
+      .reasons { display: grid; gap: 6px; margin-top: 10px; }
+      .reason { font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <button id="window-close" class="window-close" type="button" aria-label="Close intent window">×</button>
+    <div class="stack">
+      <section class="card hero">
+        <div class="eyebrow">Intent workspace</div>
+        <h1>Focus your browser around the goal.</h1>
+        <p class="hero-copy">Turn a plain-language goal into an intent-aware session that scores pages, suppresses distractions, remembers useful research, and nudges you back on task.</p>
+        <div class="input-shell">
+          <textarea id="intent-input" placeholder="Example: I am researching FRC vision localization and camera calibration for autonomous aiming"></textarea>
+          <div class="button-row">
+            <button id="save-intent" type="button">Launch intent mode</button>
+            <button class="secondary" id="clear-intent" type="button">Clear session</button>
+          </div>
+          <div class="status" id="status-message" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Session pulse</h2>
+          <span class="pill" id="page-status-pill" data-tone="idle">No page scored</span>
+        </div>
+        <div class="grid-2">
+          <div class="stat"><strong id="focus-score">0%</strong><span>Focus score</span></div>
+          <div class="stat"><strong id="session-visits">0</strong><span>Tracked pages</span></div>
+          <div class="stat"><strong id="session-useful">0</strong><span>Useful pages</span></div>
+          <div class="stat"><strong id="session-drift">0</strong><span>Drift moments</span></div>
+        </div>
+        <div class="focus-bar"><div class="focus-fill" id="focus-fill"></div></div>
+        <p class="metric" id="page-summary" style="margin-top:10px;">Open a page to see how well it matches the goal.</p>
+        <p class="metric" id="page-score">Score: —</p>
+        <div class="reasons" id="page-reasons"><div class="reason">Why: no evidence yet.</div></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Intent parser</h2>
+          <span class="tiny" id="intent-updated">No active session</span>
+        </div>
+        <div class="parser-grid">
+          <div class="parser-item"><div class="label">Mode</div><div id="intent-mode">—</div></div>
+          <div class="parser-item"><div class="label">Topic</div><div id="intent-topic">No active topic</div></div>
+          <div class="parser-item"><div class="label">Keywords</div><div class="chips" id="intent-keywords"></div></div>
+          <div class="parser-item"><div class="label">Distractors to suppress</div><div class="chips" id="intent-distractors"></div></div>
+          <div class="parser-item"><div class="label">Suggested tools</div><div class="chips" id="intent-tools"></div></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head"><h2>Session memory</h2><span class="tiny">Useful pages, notes, and recovery cues</span></div>
+        <div class="timeline" id="useful-pages"></div>
+        <div style="margin-top:14px;">
+          <input id="session-note" type="text" placeholder="Capture what you learned, decided, or need to do next">
+          <div class="button-row-compact">
+            <button id="save-note" type="button">Save note</button>
+            <button class="secondary" id="open-options" type="button">Settings</button>
+          </div>
+        </div>
+        <div style="margin-top:14px;">
+          <div class="section-head" style="margin-bottom:8px;"><h3 style="font-size:13px;">Recent notes</h3></div>
+          <div class="note-list" id="session-notes"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head"><h2>Recent drift + top themes</h2></div>
+        <div class="parser-grid">
+          <div class="parser-item"><div class="label">Top recurring keywords</div><div class="chips" id="top-keywords"></div></div>
+          <div class="parser-item"><div class="label">Recent drift events</div><div class="timeline" id="drift-events"></div></div>
+        </div>
+      </section>
+    </div>
+
+    <script src="../shared/intent-storage.js"></script>
+    <script src="../shared/classifier.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
