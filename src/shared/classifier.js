@@ -758,10 +758,22 @@
     }
 
     const pageType = pageSignals.pageType || 'general';
+    const siteProfile = pageSignals.siteProfile && typeof pageSignals.siteProfile === 'object' ? pageSignals.siteProfile : {};
+    const pageTypeHints = siteProfile.pageTypeHints && typeof siteProfile.pageTypeHints === 'object'
+      ? siteProfile.pageTypeHints
+      : {};
     if (['feed', 'home-discovery', 'search-results'].includes(pageType) && topicCoverageRatio < 0.5) {
       breakdown.pageTypeAdjustment -= 4;
     } else if (['article', 'documentation'].includes(pageType) && topicCoverageRatio > 0.2) {
       breakdown.pageTypeAdjustment += 3;
+    }
+    const boostedTypes = Array.isArray(pageTypeHints.boost) ? pageTypeHints.boost : [];
+    const penalizedTypes = Array.isArray(pageTypeHints.penalize) ? pageTypeHints.penalize : [];
+    if (boostedTypes.includes(pageType)) {
+      breakdown.pageTypeAdjustment += 2;
+    }
+    if (penalizedTypes.includes(pageType)) {
+      breakdown.pageTypeAdjustment -= 2;
     }
 
     if (onKnowledgeDomain && topicCoverageRatio > 0.15) {
@@ -1041,7 +1053,8 @@
       pageText: extractVisiblePageText(),
       domain: window.location.hostname,
       url: window.location.href,
-      focusMomentum: context && typeof context.focusMomentum === 'number' ? context.focusMomentum : 0.5
+      focusMomentum: context && typeof context.focusMomentum === 'number' ? context.focusMomentum : 0.5,
+      siteProfile: context && context.siteProfile ? context.siteProfile : null
     };
     pageSignals.pageMeta = collectPageMeta(pageSignals.pageText);
     pageSignals.pageType = detectPageType(pageSignals);

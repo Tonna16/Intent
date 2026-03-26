@@ -6,6 +6,7 @@
     highlightedParagraphs: [],
     highlightedBlocks: [],
     subduedBlocks: [],
+    hiddenBlocks: [],
     bannerElement: null,
     bannerDismissed: false,
     lastDriftUrl: '',
@@ -48,8 +49,16 @@
       block.classList.remove('intent-mode-subdued-block');
       block.removeAttribute('data-intent-block-label');
     });
+    STATE.hiddenBlocks.forEach((entry) => {
+      if (!entry || !entry.element) {
+        return;
+      }
+      entry.element.style.setProperty('display', entry.previousDisplay || '', entry.previousPriority || '');
+      entry.element.removeAttribute('data-intent-hidden-by-profile');
+    });
     STATE.highlightedBlocks = [];
     STATE.subduedBlocks = [];
+    STATE.hiddenBlocks = [];
   }
 
   function clearBehavior() {
@@ -308,11 +317,88 @@
       return;
     }
 
+    const siteRule = classification && classification.siteRule ? classification.siteRule : { preserve: [], blurTargets: [], hideTargets: [] };
+    const treatedElements = new Set();
+    const classifySelectorEntries = (entries = []) => entries
+      .map((entry) => {
+        if (!entry) return null;
+        if (typeof entry === 'string') {
+          return { selector: entry, safe: false };
+        }
+        if (typeof entry === 'object' && typeof entry.selector === 'string') {
+          return { selector: entry.selector, safe: Boolean(entry.safe) };
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    const applySelectorClass = (selectorEntries, className, label) => {
+      classifySelectorEntries(selectorEntries).forEach((entry) => {
+        let nodes = [];
+        try {
+          nodes = Array.from(document.querySelectorAll(entry.selector));
+        } catch (error) {
+          nodes = [];
+        }
+        if (!nodes.length) {
+          return;
+        }
+        nodes.forEach((node) => {
+          if (!(node instanceof Element) || treatedElements.has(node)) {
+            return;
+          }
+          node.classList.add(className);
+          node.dataset.intentBlockLabel = label;
+          treatedElements.add(node);
+          if (className === 'intent-mode-highlight-block') {
+            STATE.highlightedBlocks.push(node);
+          } else if (className === 'intent-mode-subdued-block') {
+            STATE.subduedBlocks.push(node);
+          }
+        });
+      });
+    };
+
+    applySelectorClass(siteRule.preserve, 'intent-mode-highlight-block', 'profile-preserve');
+    if (settings.blurRecommendedFeeds) {
+      applySelectorClass(siteRule.blurTargets, 'intent-mode-subdued-block', 'profile-blur');
+      classifySelectorEntries(siteRule.hideTargets)
+        .filter((entry) => entry.safe)
+        .forEach((entry) => {
+          let nodes = [];
+          try {
+            nodes = Array.from(document.querySelectorAll(entry.selector));
+          } catch (error) {
+            nodes = [];
+          }
+          if (!nodes.length) {
+            return;
+          }
+          nodes.forEach((node) => {
+            if (!(node instanceof HTMLElement) || treatedElements.has(node)) {
+              return;
+            }
+            STATE.hiddenBlocks.push({
+              element: node,
+              previousDisplay: node.style.getPropertyValue('display'),
+              previousPriority: node.style.getPropertyPriority('display')
+            });
+            node.style.setProperty('display', 'none', 'important');
+            node.dataset.intentHiddenByProfile = 'true';
+            treatedElements.add(node);
+          });
+        });
+    }
+
     (classification.highlightBlocks || []).slice(0, 4).forEach((block) => {
       if (block && block.element) {
+        if (treatedElements.has(block.element)) {
+          return;
+        }
         block.element.classList.add('intent-mode-highlight-block');
         block.element.dataset.intentBlockLabel = 'highlight';
         STATE.highlightedBlocks.push(block.element);
+        treatedElements.add(block.element);
       }
     });
 
@@ -322,9 +408,13 @@
 
     (classification.blurBlocks || []).slice(0, 6).forEach((block) => {
       if (block && block.element) {
+        if (treatedElements.has(block.element)) {
+          return;
+        }
         block.element.classList.add('intent-mode-subdued-block');
         block.element.dataset.intentBlockLabel = 'subdued';
         STATE.subduedBlocks.push(block.element);
+        treatedElements.add(block.element);
       }
     });
   }
@@ -405,6 +495,7 @@
     document.documentElement.dataset.intentLabel = classification.label;
     document.documentElement.dataset.intentScore = String(classification.score);
     document.documentElement.dataset.intentKeywords = classification.intent.keywords.join(',');
+    document.documentElement.dataset.intentSiteProfile = classification.siteRule && classification.siteRule.id ? classification.siteRule.id : 'default';
 
     updateDynamicStyles(settings, classification, sessionActive);
     updateParagraphHighlights(settings, classification);
@@ -452,9 +543,14 @@
           return total;
         }, 0) / recentVisits.length
         : 0.5;
+      const siteRule = globalScope.IntentSiteRules && typeof globalScope.IntentSiteRules.resolveSiteRule === 'function'
+        ? globalScope.IntentSiteRules.resolveSiteRule(window.location.hostname)
+        : { preserve: [], blurTargets: [], hideTargets: [], pageTypeHints: {} };
       const classification = globalScope.IntentClassifier.classifyDocument(state.currentIntent, state.settings, {
-        focusMomentum
+        focusMomentum,
+        siteProfile: siteRule
       });
+      classification.siteRule = siteRule;
       applyBehavior(classification, state.settings, hasActiveIntent);
       await syncVisit(classification, state.settings);
       STATE.lastClassificationSignature = signature;
