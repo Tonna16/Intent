@@ -47,6 +47,32 @@
     'streamer'
   ];
 
+  const RECOMMENDATION_MARKERS = [
+    'related', 'recommended', 'suggested', 'up next', 'watch next', 'discover', 'explore',
+    'trending', 'for you', 'for-you', 'popular', 'people also viewed', 'you may like',
+    'shop', 'products'
+  ];
+
+  const DISTRACTOR_GROUPS = {
+    social: ['feed', 'for you', 'explore', 'trending', 'discover'],
+    entertainment: ['celebrity', 'gossip', 'viral', 'meme'],
+    shopping: ['shop', 'deal', 'buy', 'sale', 'cart', 'products'],
+    streaming: ['shorts', 'reels', 'livestream', 'watch next', 'up next'],
+    gaming: ['clip', 'gameplay', 'esports', 'streamer']
+  };
+
+  const DOMAIN_CLASSIFIERS = {
+    technical: ['build', 'code', 'developer', 'debug', 'api', 'library', 'framework', 'programming', 'software'],
+    education: ['study', 'learn', 'course', 'lesson', 'tutorial', 'exam', 'quiz'],
+    research: ['research', 'paper', 'analysis', 'method', 'evidence', 'journal'],
+    shopping: ['shop', 'buy', 'sale', 'deal', 'cart', 'product'],
+    entertainment: ['celebrity', 'viral', 'meme', 'gossip', 'show', 'music'],
+    social: ['social', 'feed', 'following', 'for you', 'explore', 'trending'],
+    gaming: ['game', 'gaming', 'esports', 'streamer', 'playthrough'],
+    career: ['job', 'interview', 'resume', 'career', 'application', 'internship'],
+    news: ['news', 'breaking', 'headline', 'update', 'report']
+  };
+
   const DISTRACTOR_DOMAIN_PATTERNS = [
     /(^|\.)tiktok\.com$/i,
     /(^|\.)instagram\.com$/i,
@@ -348,7 +374,70 @@
 
   function getParagraphText(rootNode) {
     const scope = rootNode || document;
-    return Array.from(scope.querySelectorAll('p')).filter((paragraph) => isElementVisible(paragraph)).map((paragraph) => paragraph.innerText.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+    return Array.from(scope.querySelectorAll('p')).filter((paragraph) => isElementVisible(paragraph)).map((paragraph) => paragraph.innerText.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+  }
+
+  function inferDomainProfile(text) {
+    const normalized = normalizeToken(text || '').replace(/\s+/g, ' ').trim();
+    const scores = Object.entries(DOMAIN_CLASSIFIERS).map(([domain, terms]) => ({
+      domain,
+      score: terms.reduce((total, term) => total + (normalized.includes(term) ? 1 : 0), 0)
+    })).sort((left, right) => right.score - left.score);
+    return scores.filter((entry) => entry.score > 0);
+  }
+
+  function detectPageType(pageSignals) {
+    const pageMeta = pageSignals.pageMeta || {};
+    const lowerUrl = String(pageSignals.url || '').toLowerCase();
+    const lowerDomain = String(pageSignals.domain || '').toLowerCase();
+    const titleHeadingText = `${pageSignals.title || ''} ${pageSignals.headings || ''}`.toLowerCase();
+    if (/\/(shorts?|reels?|explore|discover|trending|feed|for-you|foryou)\b/.test(lowerUrl) || pageMeta.linksPer100Words >= 12) return 'feed';
+    if (/\/(search|results)\b/.test(lowerUrl) || /\bresults?\b/.test(titleHeadingText)) return 'search-results';
+    if (/\/(docs?|reference|api|guide|tutorial|wiki)\b/.test(lowerUrl) || /(^|\.)docs\./.test(lowerDomain)) return 'documentation';
+    if (/\/(watch|video)\b/.test(lowerUrl)) return 'video-watch';
+    if (/\/(shop|store|products?|deals?)\b/.test(lowerUrl)) return 'shopping';
+    if (pageMeta.concentrationTop2 >= 0.65) return 'article';
+    if (lowerUrl === `${window.location.origin.toLowerCase()}/` || /home|discover|explore/.test(titleHeadingText)) return 'home-discovery';
+    return 'general';
+  }
+
+  function collectPageMeta(pageText) {
+    const totalLinks = document.querySelectorAll('a').length;
+    const totalButtons = document.querySelectorAll('button, [role="button"]').length;
+    const wordCount = tokenizeForVector(pageText || '').length || 1;
+    const linksPer100Words = Number(((totalLinks / wordCount) * 100).toFixed(2));
+    const recommendationNodes = Array.from(document.querySelectorAll('section, aside, div, nav, [role], [aria-label], [id], [class]'))
+      .filter((element) => isElementVisible(element))
+      .filter((element) => {
+        const markerText = [
+          element.className || '',
+          element.id || '',
+          element.getAttribute('role') || '',
+          element.getAttribute('aria-label') || '',
+          element.getAttribute('aria-labelledby') || '',
+          element.innerText ? element.innerText.slice(0, 120) : ''
+        ].join(' ').toLowerCase();
+        return RECOMMENDATION_MARKERS.some((marker) => markerText.includes(marker));
+      }).length;
+
+    const contentBlocks = dedupeBlocks(Array.from(document.querySelectorAll('article, main, section, [role="main"], [role="article"], div')))
+      .map((element) => ((element.innerText || '').replace(/\s+/g, ' ').trim()))
+      .map((text) => text.length)
+      .filter((len) => len >= 120)
+      .sort((left, right) => right - left);
+    const totalBlockText = contentBlocks.reduce((sum, len) => sum + len, 0) || 1;
+    const top2 = contentBlocks.slice(0, 2).reduce((sum, len) => sum + len, 0);
+    const concentrationTop2 = Number((top2 / totalBlockText).toFixed(3));
+
+    return {
+      totalLinks,
+      totalButtons,
+      wordCount,
+      linksPer100Words,
+      recommendationNodes,
+      concentrationTop2,
+      competingBlocks: contentBlocks.filter((len) => len >= 300 && len <= 1800).length
+    };
   }
 
   function countOccurrences(haystack, needle) {
@@ -426,7 +515,10 @@
       structureBonus: 0,
       semanticSimilarity: 0,
       contextualDomainAdjustment: 0,
-      momentumAdjustment: 0
+      momentumAdjustment: 0,
+      distractionPressure: 0,
+      intentConflictAdjustment: 0,
+      pageTypeAdjustment: 0
     };
 
     let matchedKeywordCount = 0;
@@ -485,6 +577,7 @@
 
     const distractorSignals = unique([
       ...DISTRACTOR_PATTERNS,
+      ...Object.values(DISTRACTOR_GROUPS).flat(),
       ...(Array.isArray(intent.distractors) ? intent.distractors : [])
     ]);
     const distractorText = `${titleText} ${headingText} ${domainText} ${urlText}`.trim();
@@ -533,6 +626,24 @@
       breakdown.contextPenalty -= 5;
     }
 
+    const pageMeta = pageSignals.pageMeta || {};
+    const fragmentationScore = (
+      (pageMeta.linksPer100Words >= 10 ? 3 : pageMeta.linksPer100Words >= 6 ? 2 : 0)
+      + (pageMeta.recommendationNodes >= 3 ? 3 : pageMeta.recommendationNodes > 0 ? 1 : 0)
+      + (pageMeta.concentrationTop2 <= 0.45 ? 3 : pageMeta.concentrationTop2 <= 0.6 ? 1 : 0)
+      + (pageMeta.competingBlocks >= 7 ? 2 : pageMeta.competingBlocks >= 4 ? 1 : 0)
+    );
+    if (fragmentationScore > 0) {
+      breakdown.distractionPressure -= fragmentationScore;
+    }
+
+    const pageType = pageSignals.pageType || 'general';
+    if (['feed', 'home-discovery', 'search-results'].includes(pageType) && keywordCoverageRatio < 0.5) {
+      breakdown.pageTypeAdjustment -= 4;
+    } else if (['article', 'documentation'].includes(pageType) && keywordCoverageRatio > 0.2) {
+      breakdown.pageTypeAdjustment += 3;
+    }
+
     if (onKnowledgeDomain && keywordCoverageRatio > 0.15) {
       breakdown.qualityBonus += 4;
     }
@@ -546,6 +657,14 @@
 
     if (isDebugIntent && onDebugKnowledgeDomain) {
       breakdown.contextualDomainAdjustment += 5;
+    }
+
+    const intentDomainText = `${intent.topic || ''} ${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`;
+    const pageDomainText = `${titleText} ${headingText} ${paragraphText} ${urlText}`;
+    const topIntentDomain = inferDomainProfile(intentDomainText)[0];
+    const topPageDomain = inferDomainProfile(pageDomainText)[0];
+    if (topIntentDomain && topPageDomain && topIntentDomain.domain !== topPageDomain.domain && keywordCoverageRatio < 0.35) {
+      breakdown.intentConflictAdjustment -= 4;
     }
 
     const intentVectorTokens = tokenizeForVector(`${intent.normalizedText} ${intent.keywords.join(' ')} ${intent.phrases.join(' ')}`);
@@ -569,7 +688,12 @@
     if (blockMeta.inNavLike || blockMeta.inAsideLike) {
       breakdown.structureBonus -= 3;
     }
-    if (blockMeta.linkDensity > 0.5 && blockMeta.paragraphCount <= 2) {
+    const lowDepth = blockMeta.paragraphCount <= 2 || blockMeta.averageParagraphLength < 90;
+    const highInteraction = (blockMeta.linkCount || 0) + (blockMeta.buttonCount || 0) >= 12;
+    const repeatedCards = blockMeta.repeatedChildren >= 6;
+    if (blockMeta.linkDensity > 0.55 && lowDepth && (highInteraction || repeatedCards)) {
+      breakdown.structureBonus -= 5;
+    } else if (blockMeta.linkDensity > 0.5 && blockMeta.paragraphCount <= 2) {
       breakdown.structureBonus -= 2;
     } else if (blockMeta.paragraphCount >= 3 && blockMeta.averageParagraphLength >= 120) {
       breakdown.structureBonus += 2;
@@ -615,6 +739,11 @@
     const paragraphs = element.tagName.toLowerCase() === 'p' ? (element.innerText || '').replace(/\s+/g, ' ').trim() : getParagraphText(element);
     const paragraphList = (paragraphs || '').split(/\n+/).map((line) => line.trim()).filter(Boolean);
     const linkCount = element.querySelectorAll('a').length;
+    const buttonCount = element.querySelectorAll('button, [role="button"]').length;
+    const repeatedChildren = Array.from(element.children || []).filter((child) => {
+      const text = (child.innerText || '').replace(/\s+/g, ' ').trim();
+      return text.length >= 12 && text.length <= 180;
+    }).length;
     const blockTextLength = pageText.length || 1;
     return {
       title: '',
@@ -631,7 +760,10 @@
         averageParagraphLength: paragraphList.length
           ? Math.round(paragraphList.reduce((sum, line) => sum + line.length, 0) / paragraphList.length)
           : 0,
-        linkDensity: Math.min(1, linkCount / Math.max(1, blockTextLength / 120))
+        linkDensity: Math.min(1, linkCount / Math.max(1, blockTextLength / 120)),
+        linkCount,
+        buttonCount,
+        repeatedChildren
       }
     };
   }
@@ -736,6 +868,8 @@
       url: window.location.href,
       focusMomentum: context && typeof context.focusMomentum === 'number' ? context.focusMomentum : 0.5
     };
+    pageSignals.pageMeta = collectPageMeta(pageSignals.pageText);
+    pageSignals.pageType = detectPageType(pageSignals);
     const scoring = scorePage(normalizedIntent, pageSignals);
     const blocks = extractScoredBlocks(normalizedIntent, thresholds);
     const selected = chooseBlockTargets(blocks, thresholds);
