@@ -132,6 +132,8 @@
     '[class*="Feed"]', '[class*="sidebar"]', '[class*="Sidebar"]'
   ].join(', ');
 
+  const MIXED_LABEL_HIGH_DISTRACTION_THRESHOLD = 12;
+
   function unique(values) {
     return Array.from(new Set(values.filter(Boolean)));
   }
@@ -939,8 +941,11 @@
     return accepted;
   }
 
-  function mapScoreToLabel(score, thresholds) {
+  function mapScoreToLabel(score, thresholds, diagnostics) {
     const normalizedThresholds = thresholds && typeof thresholds === 'object' ? thresholds : { relevant: 24, maybe: 10, distraction: 0 };
+    const topicRelevanceSignal = ((diagnostics && diagnostics.topicMatchScore) || 0) + ((diagnostics && diagnostics.relevanceScore) || 0);
+    const distractionPressure = (diagnostics && diagnostics.distractionPressure) || 0;
+    if (topicRelevanceSignal >= normalizedThresholds.maybe && distractionPressure >= MIXED_LABEL_HIGH_DISTRACTION_THRESHOLD) return 'mixed';
     if (score >= normalizedThresholds.relevant) return 'relevant';
     if (score >= normalizedThresholds.maybe) return 'maybe';
     return 'distraction';
@@ -965,9 +970,21 @@
         breakdown: scoring.breakdown,
         matches: scoring.matches,
         density,
-        label: mapScoreToLabel(scoring.score, thresholds)
+        label: mapScoreToLabel(scoring.score, thresholds, scoring.diagnostics)
       };
     }).sort((left, right) => right.score - left.score || right.textLength - left.textLength);
+  }
+
+  function getBlockDistractionPressure(block) {
+    if (!block || !block.breakdown || typeof block.breakdown !== 'object') {
+      return 0;
+    }
+
+    const distractionKeys = [
+      'distractorPenalty', 'contextPenalty', 'distractionPressure', 'intentConflictAdjustment', 'pageTypeAdjustment'
+    ];
+
+    return distractionKeys.reduce((total, key) => total + Math.abs(Math.min(0, block.breakdown[key] || 0)), 0);
   }
 
   function chooseBlockTargets(scoredBlocks, thresholds) {
@@ -977,10 +994,19 @@
     const distractingBlocks = scoredBlocks.filter((block) => distractingKinds.has(block.kind));
     const strongestRelevant = relevantBlocks[0] || null;
     const strongestDistracting = distractingBlocks[0] || null;
+    const strongestDistractingPressure = getBlockDistractionPressure(strongestDistracting);
+    const shouldTreatAsMixed = Boolean(
+      strongestRelevant
+      && strongestRelevant.score >= thresholds.maybe
+      && strongestDistracting
+      && strongestDistractingPressure >= MIXED_LABEL_HIGH_DISTRACTION_THRESHOLD
+    );
 
     let label = 'maybe';
     if (!strongestRelevant && !strongestDistracting) {
       label = 'maybe';
+    } else if (shouldTreatAsMixed) {
+      label = 'mixed';
     } else if (strongestRelevant && strongestRelevant.score >= thresholds.relevant && (!strongestDistracting || strongestRelevant.score >= strongestDistracting.score + 4)) {
       label = 'relevant';
     } else if (strongestRelevant && strongestRelevant.score >= thresholds.maybe && (!strongestDistracting || strongestRelevant.score >= strongestDistracting.score)) {
@@ -989,15 +1015,19 @@
       label = 'distraction';
     }
 
+    const blurBlocks = shouldTreatAsMixed
+      ? distractingBlocks.slice(0, 6)
+      : distractingBlocks.filter((block) => {
+        const competingRelevantScore = strongestRelevant ? strongestRelevant.score : 0;
+        return !strongestRelevant || block.score + 3 < competingRelevantScore;
+      });
+
     return {
       label,
       strongestRelevant,
       strongestDistracting,
       highlightBlocks: relevantBlocks.filter((block) => strongestRelevant && block.score >= Math.max(thresholds.maybe, strongestRelevant.score - 6)),
-      blurBlocks: distractingBlocks.filter((block) => {
-        const competingRelevantScore = strongestRelevant ? strongestRelevant.score : 0;
-        return !strongestRelevant || block.score + 3 < competingRelevantScore;
-      })
+      blurBlocks
     };
   }
 
@@ -1018,9 +1048,13 @@
     const scoring = scorePage(normalizedIntent, pageSignals);
     const blocks = extractScoredBlocks(normalizedIntent, thresholds);
     const selected = chooseBlockTargets(blocks, thresholds);
-    const pageLevelLabel = mapScoreToLabel(scoring.score, thresholds);
+    const pageLevelLabel = mapScoreToLabel(scoring.score, thresholds, scoring.diagnostics);
     const label = normalizedIntent.keywords.length || normalizedIntent.phrases.length
-      ? (pageLevelLabel === 'relevant' && selected.label === 'maybe' ? 'relevant' : selected.label)
+      ? (pageLevelLabel === 'mixed' || selected.label === 'mixed'
+        ? 'mixed'
+        : pageLevelLabel === 'relevant' && selected.label === 'maybe'
+          ? 'relevant'
+          : selected.label)
       : 'maybe';
 
         const overallSignal = Object.values(scoring.breakdown).reduce((total, value) => total + Math.max(0, value), 0);
@@ -1046,7 +1080,7 @@
         ? 'Recent momentum indicates drift, so this page is scored more strictly'
         : 'Recent momentum is neutral');
 
-    const adjustedLabel = (label === 'relevant' && missingRequiredTopicEvidence) ? 'maybe' : label;
+    const adjustedLabel = ((label === 'relevant' || label === 'mixed') && missingRequiredTopicEvidence) ? 'maybe' : label;
 
     return {
       intent: normalizedIntent,
@@ -1061,13 +1095,17 @@
       blurBlocks: selected.blurBlocks,
       label: adjustedLabel,
       confidence,
-      isUseful: adjustedLabel === 'relevant',
+      isUseful: adjustedLabel === 'relevant' || adjustedLabel === 'mixed',
       summary: adjustedLabel === 'relevant'
- ? `This page strongly matches your intent for ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`        : adjustedLabel === 'maybe'
+ ? `This page strongly matches your intent for ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`        : adjustedLabel === 'mixed'
+ ? `This page is useful for ${normalizedIntent.topic || 'the current task'}, but its layout has meaningful distraction pressure (confidence ${confidence}%).`
+        : adjustedLabel === 'maybe'
  ? `This page has some useful overlap with ${normalizedIntent.topic || 'the current task'}, but it is not a perfect fit (confidence ${confidence}%).`
           : `This page appears to pull you away from ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`,
       recommendedAction: adjustedLabel === 'relevant'
         ? 'Save this page, extract notes, or keep exploring nearby sources.'
+        : adjustedLabel === 'mixed'
+          ? 'Keep the core content, but hide or blur side feeds and avoid recommendation loops.'
         : adjustedLabel === 'maybe'
           ? 'Skim quickly and decide whether to save it for later.'
           : 'Consider closing this tab or returning to a saved relevant page.'

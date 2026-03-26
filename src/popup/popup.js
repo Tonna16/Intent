@@ -47,6 +47,7 @@
   function formatLabel(label) {
     switch (label) {
       case 'relevant': return 'Highly relevant';
+      case 'mixed': return 'Useful + distracting';
       case 'distraction': return 'Likely distraction';
       case 'maybe': return 'Partial match';
       default: return 'No page scored';
@@ -80,7 +81,11 @@
 
     pageStatusPill.textContent = formatLabel(classification.label);
     pageStatusPill.dataset.tone = classification.label;
-    pageSummary.textContent = classification.summary || 'Scored against your active goal.';
+    const defaultSummary = classification.label === 'mixed'
+      ? 'Useful content detected, but the page layout appears distraction-heavy.'
+      : 'Scored against your active goal.';
+    const actionLine = classification.recommendedAction ? ` Next: ${classification.recommendedAction}` : '';
+    pageSummary.textContent = `${classification.summary || defaultSummary}${actionLine}`;
 const confidenceSuffix = typeof classification.confidence === 'number' ? ` • confidence ${classification.confidence}%` : '';
     pageScore.textContent = `Score: ${classification.score}${confidenceSuffix} • ${classification.intent.topic || 'No topic set'}`;    pageReasons.innerHTML = (classification.matches && classification.matches.length
       ? classification.matches.slice(0, 4).map((match) => `<div class="reason">• ${escapeHtml(match)}</div>`).join('')
@@ -120,7 +125,7 @@ const confidenceSuffix = typeof classification.confidence === 'number' ? ` • c
   }
 
   function renderStats(session) {
-    const stats = session && session.stats ? session.stats : { totalVisits: 0, relevantVisits: 0, distractionVisits: 0, focusScore: 0, topKeywords: [] };
+    const stats = session && session.stats ? session.stats : { totalVisits: 0, relevantVisits: 0, mixedVisits: 0, distractionVisits: 0, focusScore: 0, topKeywords: [] };
     focusScore.textContent = `${stats.focusScore || 0}%`;
     focusFill.style.width = `${Math.max(0, Math.min(100, stats.focusScore || 0))}%`;
     sessionVisits.textContent = String(stats.totalVisits || 0);

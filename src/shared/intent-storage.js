@@ -32,6 +32,7 @@
     stats: {
       totalVisits: 0,
       relevantVisits: 0,
+      mixedVisits: 0,
       distractionVisits: 0,
       focusScore: 0,
       topKeywords: []
@@ -60,6 +61,7 @@
       stats: {
         totalVisits: 0,
         relevantVisits: 0,
+        mixedVisits: 0,
         distractionVisits: 0,
         focusScore: 0,
         topKeywords: []
@@ -128,6 +130,7 @@
       ? {
           totalVisits: Number(session.stats.totalVisits) || 0,
           relevantVisits: Number(session.stats.relevantVisits) || 0,
+          mixedVisits: Number(session.stats.mixedVisits) || 0,
           distractionVisits: Number(session.stats.distractionVisits) || 0,
           focusScore: Number(session.stats.focusScore) || 0,
           topKeywords: Array.isArray(session.stats.topKeywords) ? session.stats.topKeywords.slice(0, 8) : []
@@ -193,11 +196,17 @@
     const visits = Array.isArray(session.visits) ? session.visits : [];
     const keywordFrequency = new Map();
     let relevantVisits = 0;
+    let mixedVisits = 0;
+    let maybeVisits = 0;
     let distractionVisits = 0;
 
     visits.forEach((visit) => {
       if (visit.label === 'relevant') {
         relevantVisits += 1;
+      } else if (visit.label === 'mixed') {
+        mixedVisits += 1;
+      } else if (visit.label === 'maybe') {
+        maybeVisits += 1;
       }
       if (visit.label === 'distraction') {
         distractionVisits += 1;
@@ -209,12 +218,13 @@
 
     const totalVisits = visits.length;
     const focusScore = totalVisits
-      ? Math.max(0, Math.min(100, Math.round((((relevantVisits * 1.25) + Math.max(0, totalVisits - distractionVisits)) / (totalVisits * 1.25)) * 100)))
+      ? Math.max(0, Math.min(100, Math.round((((relevantVisits * 1) + (mixedVisits * 0.75) + (maybeVisits * 0.45) + (distractionVisits * 0.1)) / totalVisits) * 100)))
       : 0;
 
     return {
       totalVisits,
       relevantVisits,
+      mixedVisits,
       distractionVisits,
       focusScore,
       topKeywords: Array.from(keywordFrequency.entries())
