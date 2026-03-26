@@ -133,6 +133,34 @@
   ].join(', ');
 
   const MIXED_LABEL_HIGH_DISTRACTION_THRESHOLD = 12;
+  const BLOCK_PRESELECT_LIMIT = 140;
+  const BLOCK_SAFE_FALLBACK_LIMIT = 220;
+  const MIN_PARAGRAPH_TEXT_LENGTH = 80;
+  const MIN_LIST_TEXT_LENGTH = 120;
+  const MIN_PARAGRAPH_AREA = 3200;
+  const MIN_LIST_AREA = 4800;
+  const RESULT_CACHE_TTL_MS = 8000;
+
+  const pageResultCache = new Map();
+  let classificationCycleCache = null;
+
+  function createClassificationCycleCache() {
+    return {
+      signalByElement: new WeakMap(),
+      visibleTextByElement: new WeakMap(),
+      headingTextByElement: new WeakMap(),
+      paragraphTextByElement: new WeakMap(),
+      rectByElement: new WeakMap()
+    };
+  }
+
+  function beginClassificationCycle() {
+    classificationCycleCache = createClassificationCycleCache();
+  }
+
+  function endClassificationCycle() {
+    classificationCycleCache = null;
+  }
 
   function unique(values) {
     return Array.from(new Set(values.filter(Boolean)));
@@ -361,7 +389,24 @@
     }
 
     const rect = element.getBoundingClientRect();
+    if (classificationCycleCache && element && typeof element === 'object') {
+      classificationCycleCache.rectByElement.set(element, rect);
+    }
     return rect.width > 0 && rect.height > 0;
+  }
+
+  function getElementRect(element) {
+    if (!element) {
+      return { width: 0, height: 0 };
+    }
+    if (classificationCycleCache && classificationCycleCache.rectByElement.has(element)) {
+      return classificationCycleCache.rectByElement.get(element);
+    }
+    const rect = element.getBoundingClientRect();
+    if (classificationCycleCache) {
+      classificationCycleCache.rectByElement.set(element, rect);
+    }
+    return rect;
   }
 
   function getVisibleTextNodes(rootNode) {
@@ -400,14 +445,44 @@
     return textNodes.map((node) => node.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ').trim();
   }
 
+  function getCachedVisibleText(rootNode) {
+    const scope = rootNode || document.body;
+    if (classificationCycleCache && classificationCycleCache.visibleTextByElement.has(scope)) {
+      return classificationCycleCache.visibleTextByElement.get(scope);
+    }
+    const visibleText = getVisibleTextNodes(scope)
+      .map((node) => node.textContent.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    if (classificationCycleCache) {
+      classificationCycleCache.visibleTextByElement.set(scope, visibleText);
+    }
+    return visibleText;
+  }
+
   function getHeadingText(rootNode) {
     const scope = rootNode || document;
-    return Array.from(scope.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter((heading) => isElementVisible(heading)).map((heading) => heading.innerText.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+    if (classificationCycleCache && rootNode && classificationCycleCache.headingTextByElement.has(scope)) {
+      return classificationCycleCache.headingTextByElement.get(scope);
+    }
+    const headingText = Array.from(scope.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter((heading) => isElementVisible(heading)).map((heading) => heading.innerText.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ');
+    if (classificationCycleCache && rootNode) {
+      classificationCycleCache.headingTextByElement.set(scope, headingText);
+    }
+    return headingText;
   }
 
   function getParagraphText(rootNode) {
     const scope = rootNode || document;
-    return Array.from(scope.querySelectorAll('p')).filter((paragraph) => isElementVisible(paragraph)).map((paragraph) => paragraph.innerText.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+    if (classificationCycleCache && rootNode && classificationCycleCache.paragraphTextByElement.has(scope)) {
+      return classificationCycleCache.paragraphTextByElement.get(scope);
+    }
+    const paragraphText = Array.from(scope.querySelectorAll('p')).filter((paragraph) => isElementVisible(paragraph)).map((paragraph) => paragraph.innerText.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+    if (classificationCycleCache && rootNode) {
+      classificationCycleCache.paragraphTextByElement.set(scope, paragraphText);
+    }
+    return paragraphText;
   }
 
   function inferDomainProfile(text) {
@@ -894,7 +969,10 @@
   }
 
   function collectBlockSignals(element) {
-    const pageText = getVisibleTextNodes(element).map((node) => node.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ').trim();
+    if (classificationCycleCache && classificationCycleCache.signalByElement.has(element)) {
+      return classificationCycleCache.signalByElement.get(element);
+    }
+    const pageText = getCachedVisibleText(element);
     const paragraphs = element.tagName.toLowerCase() === 'p' ? (element.innerText || '').replace(/\s+/g, ' ').trim() : getParagraphText(element);
     const paragraphList = (paragraphs || '').split(/\n+/).map((line) => line.trim()).filter(Boolean);
     const linkCount = element.querySelectorAll('a').length;
@@ -904,7 +982,7 @@
       return text.length >= 12 && text.length <= 180;
     }).length;
     const blockTextLength = pageText.length || 1;
-    return {
+    const signals = {
       title: '',
       headings: getHeadingText(element),
       paragraphs,
@@ -925,6 +1003,10 @@
         repeatedChildren
       }
     };
+    if (classificationCycleCache) {
+      classificationCycleCache.signalByElement.set(element, signals);
+    }
+    return signals;
   }
 
   function isLikelyUsefulBlock(element) {
@@ -932,8 +1014,11 @@
     const textLength = (element.innerText || '').replace(/\s+/g, ' ').trim().length;
     if (textLength < 40) return false;
     const kind = inferBlockKind(element);
-    const area = element.getBoundingClientRect().width * element.getBoundingClientRect().height;
+    const rect = getElementRect(element);
+    const area = rect.width * rect.height;
     if ((kind === 'content' || kind === 'section') && area < 1600) return false;
+    if (kind === 'paragraph' && (textLength < MIN_PARAGRAPH_TEXT_LENGTH || area < MIN_PARAGRAPH_AREA)) return false;
+    if (kind === 'card-list' && (textLength < MIN_LIST_TEXT_LENGTH || area < MIN_LIST_AREA)) return false;
     return true;
   }
 
@@ -963,9 +1048,38 @@
     return 'distraction';
   }
 
+  function getCandidateHeuristic(element) {
+    const rect = getElementRect(element);
+    const area = Math.max(1, rect.width * rect.height);
+    const textLength = ((element && element.innerText) || '').replace(/\s+/g, ' ').trim().length;
+    const kind = inferBlockKind(element);
+    const kindBonus = kind === 'content' ? 4000 : kind === 'section' ? 2000 : kind === 'paragraph' ? 500 : 1200;
+    return area + (textLength * 16) + kindBonus;
+  }
+
+  function pruneAndRankCandidates(elements) {
+    const deduped = dedupeBlocks(elements);
+    if (deduped.length <= BLOCK_PRESELECT_LIMIT) {
+      return deduped;
+    }
+    const ranked = deduped
+      .map((element) => ({ element, heuristic: getCandidateHeuristic(element) }))
+      .sort((left, right) => right.heuristic - left.heuristic)
+      .slice(0, BLOCK_PRESELECT_LIMIT)
+      .map((entry) => entry.element);
+    if (!ranked.length) {
+      return deduped.slice(0, BLOCK_SAFE_FALLBACK_LIMIT);
+    }
+    return ranked;
+  }
+
   function extractScoredBlocks(intent, thresholds) {
     const candidates = unique([document.body, ...Array.from(document.querySelectorAll(BLOCK_SELECTOR))]);
-    return dedupeBlocks(candidates).map((element, index) => {
+    let scopedCandidates = pruneAndRankCandidates(candidates);
+    if (!scopedCandidates.length) {
+      scopedCandidates = dedupeBlocks(candidates).slice(0, BLOCK_SAFE_FALLBACK_LIMIT);
+    }
+    return scopedCandidates.map((element, index) => {
       const signals = collectBlockSignals(element);
       const scoring = scorePage(intent, signals);
       const kind = inferBlockKind(element);
@@ -1044,85 +1158,127 @@
   }
 
   function classifyDocument(intentText, settings, context) {
-    const normalizedIntent = normalizeIntentText(intentText);
-    const thresholds = settings && settings.thresholds ? settings.thresholds : { relevant: 24, maybe: 10, distraction: 0 };
-    const pageSignals = {
-      title: document.title || '',
-      headings: getHeadingText(),
-      paragraphs: getParagraphText(),
-      pageText: extractVisiblePageText(),
-      domain: window.location.hostname,
-      url: window.location.href,
-      focusMomentum: context && typeof context.focusMomentum === 'number' ? context.focusMomentum : 0.5,
-      siteProfile: context && context.siteProfile ? context.siteProfile : null
-    };
-    pageSignals.pageMeta = collectPageMeta(pageSignals.pageText);
-    pageSignals.pageType = detectPageType(pageSignals);
-    const scoring = scorePage(normalizedIntent, pageSignals);
-    const blocks = extractScoredBlocks(normalizedIntent, thresholds);
-    const selected = chooseBlockTargets(blocks, thresholds);
-    const pageLevelLabel = mapScoreToLabel(scoring.score, thresholds, scoring.diagnostics);
-    const label = normalizedIntent.keywords.length || normalizedIntent.phrases.length
-      ? (pageLevelLabel === 'mixed' || selected.label === 'mixed'
-        ? 'mixed'
-        : pageLevelLabel === 'relevant' && selected.label === 'maybe'
-          ? 'relevant'
-          : selected.label)
-      : 'maybe';
+    beginClassificationCycle();
+    try {
+      const normalizedIntent = normalizeIntentText(intentText);
+      const thresholds = settings && settings.thresholds ? settings.thresholds : { relevant: 24, maybe: 10, distraction: 0 };
+      const intentHash = `${normalizedIntent.mode}|${normalizedIntent.topic}|${normalizedIntent.keywords.join(',')}|${normalizedIntent.phrases.join(',')}`;
+      const pageCacheKey = `${window.location.href}|${document.title || ''}|${intentHash}`;
+      const now = Date.now();
+      const cached = pageResultCache.get(pageCacheKey);
+      if (cached && now - cached.ts <= RESULT_CACHE_TTL_MS) {
+        return cached.value;
+      }
 
-        const overallSignal = Object.values(scoring.breakdown).reduce((total, value) => total + Math.max(0, value), 0);
-    const confidence = overallSignal > 0
-      ? Math.round(Math.min(100, Math.max(18, (Math.abs(scoring.score) / overallSignal) * 100)))
-      : 0;
+      const pageSignals = {
+        title: document.title || '',
+        headings: getHeadingText(),
+        paragraphs: getParagraphText(),
+        pageText: getCachedVisibleText(document.body),
+        domain: window.location.hostname,
+        url: window.location.href,
+        focusMomentum: context && typeof context.focusMomentum === 'number' ? context.focusMomentum : 0.5,
+        siteProfile: context && context.siteProfile ? context.siteProfile : null
+      };
+      pageSignals.pageMeta = collectPageMeta(pageSignals.pageText);
+      pageSignals.pageType = detectPageType(pageSignals);
+      const scoring = scorePage(normalizedIntent, pageSignals);
+      const blocks = extractScoredBlocks(normalizedIntent, thresholds);
+      const selected = chooseBlockTargets(blocks, thresholds);
+      const pageLevelLabel = mapScoreToLabel(scoring.score, thresholds, scoring.diagnostics);
+      const label = normalizedIntent.keywords.length || normalizedIntent.phrases.length
+        ? (pageLevelLabel === 'mixed' || selected.label === 'mixed'
+          ? 'mixed'
+          : pageLevelLabel === 'relevant' && selected.label === 'maybe'
+            ? 'relevant'
+            : selected.label)
+        : 'maybe';
 
-    const diagnostics = scoring.diagnostics || {};
-    const hasTopicConstraint = Array.isArray(normalizedIntent.topicKeywords) && normalizedIntent.topicKeywords.length > 0;
-    const missingRequiredTopicEvidence = hasTopicConstraint && (diagnostics.matchedTopicKeywordCount || 0) === 0;
-    const explanation = [];
-    if (normalizedIntent.keywords.length > 0) {
-      explanation.push(`Matches ${diagnostics.matchedKeywordCount || 0}/${normalizedIntent.keywords.length} intent keywords`);
+      const overallSignal = Object.values(scoring.breakdown).reduce((total, value) => total + Math.max(0, value), 0);
+      const confidence = overallSignal > 0
+        ? Math.round(Math.min(100, Math.max(18, (Math.abs(scoring.score) / overallSignal) * 100)))
+        : 0;
+
+      const diagnostics = scoring.diagnostics || {};
+      const hasTopicConstraint = Array.isArray(normalizedIntent.topicKeywords) && normalizedIntent.topicKeywords.length > 0;
+      const missingRequiredTopicEvidence = hasTopicConstraint && (diagnostics.matchedTopicKeywordCount || 0) === 0;
+      const explanation = [];
+      if (normalizedIntent.keywords.length > 0) {
+        explanation.push(`Matches ${diagnostics.matchedKeywordCount || 0}/${normalizedIntent.keywords.length} intent keywords`);
+      }
+      explanation.push(`Topic evidence score ${(diagnostics.topicMatchScore || 0).toFixed(1)}, mode bonus ${(diagnostics.taskModeScore || 0).toFixed(1)}, relevance ${(diagnostics.relevanceScore || 0).toFixed(1)}, distraction pressure ${(diagnostics.distractionPressure || 0).toFixed(1)}`);
+      explanation.push(`Semantic similarity ${(Math.max(0, diagnostics.semanticSimilarity || 0) * 100).toFixed(0)}%`);
+      if ((diagnostics.distractorHits || 0) > 0) {
+        explanation.push(`Distractor signals detected: ${diagnostics.distractorHits}`);
+      }
+      explanation.push(pageSignals.focusMomentum > 0.7
+        ? 'Recent momentum is focused, so borderline pages get a small boost'
+        : pageSignals.focusMomentum < 0.3
+          ? 'Recent momentum indicates drift, so this page is scored more strictly'
+          : 'Recent momentum is neutral');
+
+      const adjustedLabel = ((label === 'relevant' || label === 'mixed') && missingRequiredTopicEvidence) ? 'maybe' : label;
+
+      const result = {
+        intent: normalizedIntent,
+        pageSignals,
+        score: scoring.score,
+        breakdown: scoring.breakdown,
+        matches: unique([...(scoring.matches || []), ...explanation]),
+        blocks,
+        strongestRelevantBlock: selected.strongestRelevant,
+        strongestDistractingBlock: selected.strongestDistracting,
+        highlightBlocks: selected.highlightBlocks,
+        blurBlocks: selected.blurBlocks,
+        label: adjustedLabel,
+        confidence,
+        isUseful: adjustedLabel === 'relevant' || adjustedLabel === 'mixed',
+        summary: adjustedLabel === 'relevant'
+   ? `This page strongly matches your intent for ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`        : adjustedLabel === 'mixed'
+   ? `This page is useful for ${normalizedIntent.topic || 'the current task'}, but its layout has meaningful distraction pressure (confidence ${confidence}%).`
+          : adjustedLabel === 'maybe'
+   ? `This page has some useful overlap with ${normalizedIntent.topic || 'the current task'}, but it is not a perfect fit (confidence ${confidence}%).`
+            : `This page appears to pull you away from ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`,
+        recommendedAction: adjustedLabel === 'relevant'
+          ? 'Save this page, extract notes, or keep exploring nearby sources.'
+          : adjustedLabel === 'mixed'
+            ? 'Keep the core content, but hide or blur side feeds and avoid recommendation loops.'
+          : adjustedLabel === 'maybe'
+            ? 'Skim quickly and decide whether to save it for later.'
+            : 'Consider closing this tab or returning to a saved relevant page.'
+      };
+      pageResultCache.set(pageCacheKey, { ts: now, value: result });
+      if (pageResultCache.size > 20) {
+        const oldestKey = pageResultCache.keys().next().value;
+        pageResultCache.delete(oldestKey);
+      }
+      return result;
+    } catch (error) {
+      const safeIntent = normalizeIntentText(intentText);
+      return {
+        intent: safeIntent,
+        pageSignals: {
+          title: document.title || '',
+          domain: window.location.hostname,
+          url: window.location.href
+        },
+        score: 0,
+        breakdown: {},
+        matches: ['Fallback classification path used due to unusual page structure.'],
+        blocks: [],
+        strongestRelevantBlock: null,
+        strongestDistractingBlock: null,
+        highlightBlocks: [],
+        blurBlocks: [],
+        label: 'maybe',
+        confidence: 18,
+        isUseful: false,
+        summary: `This page could not be fully analyzed for ${safeIntent.topic || 'the current task'}, so a safe fallback was used.`,
+        recommendedAction: 'Review this page manually; automated block scoring was limited on this layout.'
+      };
+    } finally {
+      endClassificationCycle();
     }
-    explanation.push(`Topic evidence score ${(diagnostics.topicMatchScore || 0).toFixed(1)}, mode bonus ${(diagnostics.taskModeScore || 0).toFixed(1)}, relevance ${(diagnostics.relevanceScore || 0).toFixed(1)}, distraction pressure ${(diagnostics.distractionPressure || 0).toFixed(1)}`);
-    explanation.push(`Semantic similarity ${(Math.max(0, diagnostics.semanticSimilarity || 0) * 100).toFixed(0)}%`);
-    if ((diagnostics.distractorHits || 0) > 0) {
-      explanation.push(`Distractor signals detected: ${diagnostics.distractorHits}`);
-    }
-    explanation.push(pageSignals.focusMomentum > 0.7
-      ? 'Recent momentum is focused, so borderline pages get a small boost'
-      : pageSignals.focusMomentum < 0.3
-        ? 'Recent momentum indicates drift, so this page is scored more strictly'
-        : 'Recent momentum is neutral');
-
-    const adjustedLabel = ((label === 'relevant' || label === 'mixed') && missingRequiredTopicEvidence) ? 'maybe' : label;
-
-    return {
-      intent: normalizedIntent,
-      pageSignals,
-      score: scoring.score,
-      breakdown: scoring.breakdown,
-      matches: unique([...(scoring.matches || []), ...explanation]),
-      blocks,
-      strongestRelevantBlock: selected.strongestRelevant,
-      strongestDistractingBlock: selected.strongestDistracting,
-      highlightBlocks: selected.highlightBlocks,
-      blurBlocks: selected.blurBlocks,
-      label: adjustedLabel,
-      confidence,
-      isUseful: adjustedLabel === 'relevant' || adjustedLabel === 'mixed',
-      summary: adjustedLabel === 'relevant'
- ? `This page strongly matches your intent for ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`        : adjustedLabel === 'mixed'
- ? `This page is useful for ${normalizedIntent.topic || 'the current task'}, but its layout has meaningful distraction pressure (confidence ${confidence}%).`
-        : adjustedLabel === 'maybe'
- ? `This page has some useful overlap with ${normalizedIntent.topic || 'the current task'}, but it is not a perfect fit (confidence ${confidence}%).`
-          : `This page appears to pull you away from ${normalizedIntent.topic || 'the current task'} (confidence ${confidence}%).`,
-      recommendedAction: adjustedLabel === 'relevant'
-        ? 'Save this page, extract notes, or keep exploring nearby sources.'
-        : adjustedLabel === 'mixed'
-          ? 'Keep the core content, but hide or blur side feeds and avoid recommendation loops.'
-        : adjustedLabel === 'maybe'
-          ? 'Skim quickly and decide whether to save it for later.'
-          : 'Consider closing this tab or returning to a saved relevant page.'
-    };
   }
 
   globalScope.IntentClassifier = {
