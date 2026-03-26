@@ -154,6 +154,10 @@
       title.textContent = `On goal: ${topic}`;
       copy.textContent = `Relevant page • score ${classification.score}`;
       banner.dataset.tone = 'relevant';
+    } else if (classification.label === 'mixed') {
+      title.textContent = `Useful, but distracting layout: ${topic}`;
+      copy.textContent = 'Keep the core content, but watch sidebar/feed distractions.';
+      banner.dataset.tone = 'mixed';
     } else if (classification.label === 'maybe') {
       title.textContent = `Check alignment: ${topic}`;
       copy.textContent = 'This page only partially matches your current intent.';
@@ -249,6 +253,10 @@
 
       #intent-mode-banner[data-tone="maybe"] {
         border-left: 4px solid #f59e0b;
+      }
+
+      #intent-mode-banner[data-tone="mixed"] {
+        border-left: 4px solid #a855f7;
       }
 
       #intent-mode-banner[data-tone="distraction"] {
@@ -409,6 +417,7 @@
       const focusMomentum = recentVisits.length
         ? recentVisits.reduce((total, visit) => {
           if (visit.label === 'relevant') return total + 1;
+          if (visit.label === 'mixed') return total + 0.75;
           if (visit.label === 'maybe') return total + 0.5;
           return total;
         }, 0) / recentVisits.length
